@@ -1,7 +1,7 @@
 //! The daily run's service: when to fetch the day's Bitcoin block, the
 //! background thread that does it, and the daily's bookkeeping in the profile.
 //!
-//! The rule, the verification and the fetch are in `crates/flock-daily`; see
+//! The rule, the verification and the fetch are in the `blockseed` crate; see
 //! `docs/SPEC.md` section 14. Nothing here blocks the UI thread: the fetch runs
 //! on its own thread and the screen polls a channel once per frame.
 
@@ -9,6 +9,11 @@ use crate::platform::data_dir::{DailyBest, DailyCache, Profile};
 use flock_core::{course_fingerprint, det, MatchConfig};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// The seed domain of the daily run. Changing it changes every daily seed.
+pub const SEED_DOMAIN: &[u8] = b"clusterflock-daily-v1";
+/// The User-Agent sent to the block explorers: plain, no contact details.
+pub const USER_AGENT: &str = "clusterflock";
 
 /// A cached daily younger than this is not fetched again.
 pub const FRESH_SECS: u64 = 20 * 60;
@@ -49,10 +54,9 @@ pub fn thousands(n: u32) -> String {
 /// stale explorer tip, or a tip timestamp that steps back across midnight), and a
 /// result the second source did not confirm never replaces one already cached for
 /// that day. A different block (by hash) resets the day's best.
-pub fn apply(profile: &mut Profile, o: &flock_daily::resolve::Outcome, now: u64) {
-    let d = &o.daily;
+pub fn apply(profile: &mut Profile, d: &blockseed::Daily, cross_checked: bool, now: u64) {
     if let Some(c) = &profile.daily {
-        if d.day < c.day || (!o.cross_checked && d.day == c.day && d.hash_hex != c.hash_hex) {
+        if d.day < c.day || (!cross_checked && d.day == c.day && d.hash_hex != c.hash_hex) {
             return;
         }
         if c.hash_hex != d.hash_hex {
@@ -117,7 +121,7 @@ impl Line {
     }
 }
 
-type Reply = Result<flock_daily::resolve::Outcome, flock_daily::Error>;
+type Reply = Result<blockseed::resolve::Outcome, blockseed::Error>;
 
 /// The background fetch, owned by the Home screen.
 #[derive(Default)]
@@ -147,8 +151,8 @@ impl DailyService {
         if let Some(rx) = &self.rx {
             match rx.try_recv() {
                 Ok(Ok(o)) => {
-                    log::info!("daily: block {} seed {:#x} cross-checked {} ({} requests)", o.daily.height, o.daily.seed, o.cross_checked, o.requests);
-                    apply(profile, &o, now);
+                    log::info!("daily: block {} seed {:#x} cross-check {:?} ({} requests)", o.daily.height, o.daily.seed, o.cross_check, o.requests);
+                    apply(profile, &o.daily, o.cross_checked(), now);
                     self.rx = None;
                     self.failed_at = None;
                     changed = true;
@@ -168,15 +172,24 @@ impl DailyService {
         }
         let paused = self.failed_at.is_some_and(|f| now.abs_diff(f) < RETRY_SECS);
         if allow && self.rx.is_none() && !paused && is_stale(profile.daily.as_ref(), now) {
-            self.start();
+            // The cached daily, if any. blockseed uses it only when it is the daily
+            // of the day before the tip's and today's is not confirmed yet, which
+            // saves walking yesterday's blocks again after midnight.
+            let known = profile.daily.as_ref().map(|c| blockseed::Daily {
+                day: c.day,
+                height: c.height,
+                hash_hex: c.hash_hex.clone(),
+                seed: c.seed,
+            });
+            self.start(known);
         }
         changed
     }
 
-    fn start(&mut self) {
+    fn start(&mut self, known: Option<blockseed::Daily>) {
         let (tx, rx) = channel();
         let spawned = std::thread::Builder::new().name("daily-fetch".into()).spawn(move || {
-            let _ = tx.send(flock_daily::http::fetch_today());
+            let _ = tx.send(blockseed::http::fetch_today_with(SEED_DOMAIN, USER_AGENT, known.as_ref()));
         });
         match spawned {
             Ok(_) => self.rx = Some(rx),
@@ -200,10 +213,10 @@ impl DailyService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flock_daily::{resolve::Outcome, Daily};
+    use blockseed::Daily;
 
-    fn outcome(height: u32) -> Outcome {
-        Outcome { daily: Daily { day: 20766, height, hash_hex: "00".repeat(32), seed: 42 }, cross_checked: true, requests: 21 }
+    fn daily(height: u32) -> Daily {
+        Daily { day: 20766, height, hash_hex: "00".repeat(32), seed: 42 }
     }
 
     #[test]
@@ -227,12 +240,12 @@ mod tests {
     #[test]
     fn a_new_block_resets_the_best_and_the_same_block_keeps_it() {
         let mut p = Profile::default();
-        apply(&mut p, &outcome(100), 5);
+        apply(&mut p, &daily(100), true, 5);
         record_attempt(&mut p, 100, 512, 9);
-        apply(&mut p, &outcome(100), 6);
+        apply(&mut p, &daily(100), true, 6);
         assert_eq!(p.daily_best, Some(DailyBest { height: 100, metres: 512, coins: 9, attempts: 1 }));
         assert_eq!(p.daily.as_ref().unwrap().fetched_unix, 6);
-        apply(&mut p, &outcome(101), 7);
+        apply(&mut p, &daily(101), true, 7);
         assert_eq!(p.daily_best, None);
     }
 
@@ -253,7 +266,7 @@ mod tests {
         let s = DailyService::new();
         assert_eq!(s.line(&p).text(), "Needs internet once today");
         assert!(!s.line(&p).playable());
-        apply(&mut p, &outcome(921_344), 1);
+        apply(&mut p, &daily(921_344), true, 1);
         assert_eq!(s.line(&p).text(), "block 921,344 \u{b7} not run yet");
         record_attempt(&mut p, 921_344, 512, 3);
         assert_eq!(s.line(&p).text(), "block 921,344 \u{b7} best 512 m today");

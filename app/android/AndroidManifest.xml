@@ -44,8 +44,9 @@
   (RoomService below), REQUEST_INSTALL_PACKAGES (in-app updates and More games,
   below).
 
-  In-app updates and More games (Updater.java + UpdateReceiver.java; app/src/update.rs
-  and app/src/games.rs decide what to install from a signed nostr release event):
+  In-app updates and More games (nostr-release-kit's Updater + UpdateReceiver, compiled in
+  by tools/build-apk.sh; the kit's Rust half and app/src/games.rs decide what to install
+  from a signed nostr release event):
   REQUEST_INSTALL_PACKAGES lets the app ask Android's installer to replace itself
   or to install a catalog game. Android keeps its own "Install unknown apps" switch
   for this app (off by default) and always shows its own confirm prompt, so an
@@ -54,7 +55,7 @@
   manifest because an update replaces the process. <queries> lists the catalog's
   packages: since Android 11 an app cannot see another package (to show Get or
   Open, and to open it) unless it asks for it here. Keep it in step with
-  app/src/games.rs CATALOG.
+  app/src/games.rs CATALOG_ENTRIES.
 
   Bluetooth games (off-grid; BtBridge.java + app/src/platform/ble_android.rs):
   API 31+: BLUETOOTH_SCAN (neverForLocation: we never derive location),
@@ -142,9 +143,9 @@
             </intent-filter>
         </activity>
 
-        <!-- PackageInstaller session status for in-app updates and installs (Updater.java). -->
+        <!-- PackageInstaller session status for in-app updates and installs (the release kit's Updater). -->
         <receiver
-            android:name=".UpdateReceiver"
+            android:name="dev.forgesworn.release.UpdateReceiver"
             android:exported="false" />
 
         <service

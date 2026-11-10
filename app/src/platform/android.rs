@@ -30,6 +30,8 @@ use super::Insets;
 use android_activity::AndroidApp;
 use jni::objects::{GlobalRef, JObject, JObjectArray, JString, JValue};
 use jni::{JNIEnv, JavaVM};
+use nostr_release_kit::android::AndroidInstaller;
+use nostr_release_kit::{ApkInstaller, ApkJob, ApkStatus};
 use std::collections::VecDeque;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -431,6 +433,46 @@ impl Drop for AndroidPlatform {
     }
 }
 
+/// Installing APKs is the release kit's Android half (`dev.forgesworn.release.Updater`,
+/// compiled in by tools/build-apk.sh): this platform delegates to its `AndroidInstaller`.
+impl ApkInstaller for AndroidPlatform {
+    fn can_install_apk(&self) -> bool {
+        AndroidInstaller.can_install_apk()
+    }
+
+    fn own_cert_sha256(&mut self) -> Option<String> {
+        AndroidInstaller.own_cert_sha256()
+    }
+
+    fn apk_start(&mut self, job: &ApkJob) -> Result<(), String> {
+        AndroidInstaller.apk_start(job)
+    }
+
+    fn apk_status(&mut self) -> ApkStatus {
+        AndroidInstaller.apk_status()
+    }
+
+    fn apk_cancel(&mut self) {
+        AndroidInstaller.apk_cancel();
+    }
+
+    fn apk_active_package(&mut self) -> Option<String> {
+        AndroidInstaller.apk_active_package()
+    }
+
+    fn apk_open_install_settings(&mut self) {
+        AndroidInstaller.apk_open_install_settings();
+    }
+
+    fn installed_version_code(&mut self, package: &str) -> Option<u32> {
+        AndroidInstaller.installed_version_code(package)
+    }
+
+    fn open_package(&mut self, package: &str) -> bool {
+        AndroidInstaller.open_package(package)
+    }
+}
+
 impl Platform for AndroidPlatform {
     fn set_orientation(&mut self, orientation: super::os::Orientation) {
         let Some(app) = app() else { return };
@@ -564,42 +606,6 @@ impl Platform for AndroidPlatform {
         });
         log::info!("android: leave app, moveTaskToBack -> {moved:?}");
         moved == Some(true)
-    }
-
-    fn can_install_apk(&self) -> bool {
-        true
-    }
-
-    fn own_cert_sha256(&mut self) -> Option<String> {
-        super::updater_android::cert_sha256()
-    }
-
-    fn apk_start(&mut self, job: &super::os::ApkJob) -> Result<(), String> {
-        super::updater_android::start(job)
-    }
-
-    fn apk_status(&mut self) -> super::os::ApkStatus {
-        super::updater_android::status()
-    }
-
-    fn apk_cancel(&mut self) {
-        super::updater_android::cancel();
-    }
-
-    fn apk_active_package(&mut self) -> Option<String> {
-        super::updater_android::active_package()
-    }
-
-    fn apk_open_install_settings(&mut self) {
-        super::updater_android::open_install_settings();
-    }
-
-    fn installed_version_code(&mut self, package: &str) -> Option<u32> {
-        super::updater_android::installed_version_code(package)
-    }
-
-    fn open_package(&mut self, package: &str) -> bool {
-        super::updater_android::launch(package).is_ok()
     }
 
     fn set_multicast_lock(&mut self, on: bool) {

@@ -83,7 +83,9 @@ package and certificate before Android's own install prompt.
 - `app/` the `gameflock` crate (lib + desktop bin + Android cdylib).
 - `crates/flock-render` the wgpu 3D renderer, `crates/flock-audio` the
   synthesised sound bank (both inherited from the fork).
-- `tools/build-apk.sh` the APK pipeline; `tools/release/` the release publisher.
+- `tools/build-apk.sh` the APK pipeline; `tools/release/` the release
+  config (`release.json`) and the wrapper (`publish.sh`) that runs
+  nostr-release-kit's publisher.
 
 ## Assets
 

@@ -39,6 +39,7 @@ pub struct SettingsScreen {
     debug: bool,
     /// Scroll to the cards on the first frame (screenshots).
     to_cards: bool,
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     demo: Demo,
     /// The first frame ran (staged state is set up once).
     started: bool,
@@ -142,13 +143,20 @@ impl Screen for SettingsScreen {
 
     fn update(&mut self, ctx: &mut Ctx) -> Transition {
         common::begin(ctx, &mut self.t);
-        if !std::mem::replace(&mut self.started, true) && self.demo != Demo::None && ctx.opts.shot.is_some() {
-            // Staged screenshots only: a throwaway-signed offer, never on a real run.
-            ctx.updates.demo_offer("0.3.0", "Faster starts, a new track and fixes.");
-            if self.demo == Demo::Downloading {
-                ctx.updates.demo_install_state(crate::platform::os::ApkStatus::Downloading { done: 12_400_000, total: 27_700_000 });
+        let first = !std::mem::replace(&mut self.started, true);
+        // Staged screenshots only (a desktop path): a throwaway-signed offer. The kit compiles its
+        // staging methods in only with its `testing` feature, which is on for non-Android builds only.
+        #[cfg(not(target_os = "android"))]
+        {
+            if first && self.demo != Demo::None && ctx.opts.shot.is_some() {
+                ctx.updates.demo_offer("0.3.0", "Faster starts, a new track and fixes.");
+                if self.demo == Demo::Downloading {
+                    ctx.updates.demo_install_state(nostr_release_kit::ApkStatus::Downloading { done: 12_400_000, total: 27_700_000 });
+                }
             }
         }
+        #[cfg(target_os = "android")]
+        let _ = first;
         if let Some(k) = self.keypad.as_mut() {
             k.age += ctx.dt;
         }
@@ -185,7 +193,7 @@ impl Screen for SettingsScreen {
         let keypad_open = keypad.is_some();
         let mut to_cards = std::mem::take(&mut self.to_cards);
         let mut card_act: Option<CardAction> = None;
-        let upd = ctx.updates.view(crate::update::unix_now());
+        let upd = ctx.updates.view(nostr_release_kit::updater::unix_now());
         let screen_rect = ctx.viewport.screen;
         common::page(ctx.viewport.screen, tm, ui, 0.55, |ui, _| {
             let hd = widgets::header(ui, safe, "Settings", widgets::enter(t, 0));

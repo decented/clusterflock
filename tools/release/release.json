@@ -1,0 +1,12 @@
+{
+  "channel": "gameflock-android-apk",
+  "package": "org.decented.gameflock",
+  "expected_cert_sha256": "46fd4f7a80b700cd7d951c04e38fa3344405759d53d161de3e4dd06120fb3ace",
+  "release_pubkey": "01b0f270e290f5cd48aa537392de04e4b22124c16d696de96158395a60343b0f",
+  "key_file_env": "FLOCK_RELEASE_KEY_FILE",
+  "key_file": "~/.flock-release/release-key.hex",
+  "relays": ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"],
+  "mirrors": ["https://nostr.download"],
+  "version_source": "semver",
+  "blossom_note": "Cluster Flock release artifact upload"
+}

@@ -70,7 +70,7 @@ pub struct Ctx<'a> {
     pub opts: &'a Options,
     pub(crate) toast: &'a mut Option<Toast>,
     /// In-app updates, and the download / install path More games shares.
-    pub updates: &'a mut crate::update::Updater,
+    pub updates: &'a mut nostr_release_kit::Updater,
     pub account: &'a mut Option<crate::account::Account>,
 }
 

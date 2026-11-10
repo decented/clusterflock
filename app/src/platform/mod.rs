@@ -13,8 +13,6 @@ pub mod lan;
 pub mod lifecycle;
 pub mod os;
 pub mod touch;
-#[cfg(target_os = "android")]
-pub mod updater_android;
 pub mod viewport;
 
 pub use os::Platform;

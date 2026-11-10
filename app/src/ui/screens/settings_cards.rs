@@ -9,7 +9,7 @@
 
 use crate::ui::theme;
 use crate::ui::widgets::{self, Btn};
-use crate::update::{UpdateTone, UpdateView};
+use nostr_release_kit::{UpdateTone, UpdateView};
 use egui::{pos2, vec2, Align2, Color32, Rect, Stroke, Ui};
 
 /// Height of a button row in a card.
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn the_updates_card_offers_what_the_view_allows() {
-        use crate::update::OfferView;
+        use nostr_release_kit::OfferView;
         let c = Rect::from_min_size(pos2(20.0, 20.0), vec2(CARD_W, 260.0));
         let mut v = UpdateView { installed: "v0.2.0".into(), status: "Version 0.3.0 is available (9.8 MB)".into(), tone: UpdateTone::Accent, offer: Some(OfferView { version: "0.3.0".into(), size: "9.8 MB".into(), notes: String::new() }), checking: false, progress: None, can_check: true, can_install: true, downloading: false };
         let (x, inner) = (c.min.x + PAD + 2.0, c.width() - 2.0 * PAD - 4.0);

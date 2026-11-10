@@ -41,8 +41,8 @@ pub struct Services {
     pub muted: bool,
     pub opts: Options,
     pub toast: Option<Toast>,
-    /// In-app updates and the install path More games shares (see `crate::update`).
-    pub updates: crate::update::Updater,
+    /// In-app updates and the install path More games shares (see `crate::release`).
+    pub updates: nostr_release_kit::Updater,
     pub account: Option<crate::account::Account>,
     /// What screens see while a fade-out holds input back.
     no_touches: Touches,
@@ -114,7 +114,7 @@ impl Engine {
         theme::install(&egui);
         let insets = opts.insets;
         // Screenshots keep the state in memory only (their staged offers are throwaway-signed).
-        let mut updates = if opts.shot.is_some() { crate::update::Updater::in_memory() } else { crate::update::Updater::open(&data_dir) };
+        let mut updates = crate::release::updater(if opts.shot.is_some() { None } else { Some(&data_dir) });
         updates.set_user_relays(crate::platform::relays());
         // Staged screenshots and unit harnesses have no persisted accounts or sockets.
         let account = if opts.shot.is_some() || cfg!(test) { None } else { Some(crate::account::Account::open(&data_dir)) };

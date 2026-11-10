@@ -3,6 +3,7 @@ package org.decented.gameflock;
 import android.app.NativeActivity;
 import android.content.Intent;
 import android.os.Bundle;
+import dev.forgesworn.release.Updater;
 
 /**
  * NativeActivity that keeps the newest intent. Stock NativeActivity drops
@@ -12,7 +13,7 @@ import android.os.Bundle;
  *
  * It also hands itself to BtBridge (Bluetooth games need an Activity to ask
  * for permissions) and forwards the permission answer, and hands itself to
- * {@link Updater} (in-app updates and the More games installs need an Activity
+ * {@link Updater} (the release kit's: in-app updates and the More games installs need an Activity
  * to show Android's install prompt) and tells it when the game comes back to
  * the front.
  */

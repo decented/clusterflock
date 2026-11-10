@@ -11,7 +11,7 @@
 //! its own small budget (message size, kept events, frames inspected), so one
 //! relay cannot fill the shared cap or the app's memory and hide another
 //! relay's copy. The caller still checks the signer and the event's contents
-//! (`update::parse_release`).
+//! (nostr-release-kit's `parse_release`).
 
 use decented_relays::RelayPool;
 use futures_util::{SinkExt, StreamExt};
@@ -40,25 +40,9 @@ const MAX_FRAMES_PER_RELAY: usize = 2000;
 const MAX_EVENTS: usize = 200;
 const SUB_ID: &str = "flock-fetch";
 
-/// What a read of the relays found, and how many of them really answered.
-#[derive(Debug, Clone, Default)]
-pub struct FetchReport {
-    /// Stored events matching the filters, deduplicated by id, newest first.
-    pub events: Vec<Event>,
-    /// Relays that answered (sent EOSE themselves, or sent an event we kept).
-    /// A `CLOSED` is a refusal, not an answer.
-    pub answered: usize,
-    /// Relays asked.
-    pub total: usize,
-}
-
-impl FetchReport {
-    /// At least one relay answered. With no events, the answer was "nothing
-    /// published"; without it, the relays could not be reached.
-    pub fn reached(&self) -> bool {
-        self.answered > 0
-    }
-}
+/// What a read of the relays found, and how many of them really answered: the
+/// release kit's report type (events, relays that answered, relays asked).
+pub use nostr_release_kit::FetchReport;
 
 /// The result of a background operation, delivered once.
 pub struct Task<T> {
@@ -112,6 +96,23 @@ pub fn fetch_live(urls: Vec<String>, filters: Vec<Filter>, timeout: Duration) ->
         let _ = tx.send(report);
     });
     Task { rx: Mutex::new(rx) }
+}
+
+/// The release kit's relay reader: it asks for a read, this module does it.
+pub struct AppFetcher;
+
+struct Pending(Task<FetchReport>);
+
+impl nostr_release_kit::PendingFetch for Pending {
+    fn poll(&mut self) -> Option<FetchReport> {
+        self.0.poll()
+    }
+}
+
+impl nostr_release_kit::ReleaseFetcher for AppFetcher {
+    fn start(&mut self, relays: Vec<String>, filters: Vec<Filter>, timeout: Duration) -> Box<dyn nostr_release_kit::PendingFetch> {
+        Box::new(Pending(fetch_live(relays, filters, timeout)))
+    }
 }
 
 /// What one relay's task reports back.

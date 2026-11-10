@@ -4,11 +4,13 @@
 # tools/packaging/android/build-apk.sh, MIT).
 #
 # The Java is small (app/android/java): FlockActivity (NativeActivity +
-# onNewIntent + Bluetooth permission result), RoomService, the in-app updater
-# (Updater, UpdateReceiver, ApkCheck: download, verify, PackageInstaller), and the Bluetooth
+# onNewIntent + Bluetooth permission result), RoomService, and the Bluetooth
 # bridge (BtBridge + Framing; unit-tested on the host JDK, and its native
-# methods are checked against the built .so); every other OS service is a JNI
-# call from Rust.
+# methods are checked against the built .so). The in-app updater's Java (Updater,
+# UpdateReceiver, ApkCheck, RedirectRule: download, verify, PackageInstaller) is
+# nostr-release-kit's, compiled in from $KIT/android/java and tested on the host
+# JDK with the kit's own tests and vectors; every other OS service is a JNI call
+# from Rust.
 # So the pipeline is
 #   cargo-ndk -> aapt2 compile/link -> javac + d8 -> zip in the .so and
 #   classes.dex -> zipalign -> apksigner.
@@ -20,10 +22,14 @@
 #   DIAG=1 tools/build-apk.sh            # diagnostic: unstripped .so + debuggable
 #                                        # manifest, so `adb shell debuggerd -b <pid>`
 #                                        # shows symbolised native stacks. Never ship.
+#                                        # Named ..._<abi>-diag.apk, never repoints
+#                                        # gameflock.apk, and is refused when it would
+#                                        # be signed with the release keystore (unless
+#                                        # ALLOW_DIAG_RELEASE_KEY=1).
 #
 # Outputs (outside the repo):
 #   ${OUT:-~/.cache/flock-android/out}/gameflock_<version>_<abi>.apk
-#   ...and a stable symlink gameflock.apk next to it.
+#   ...and a stable symlink gameflock.apk next to it (not for DIAG=1 builds).
 #
 # Signing: the Cluster Flock release key at ~/.flock-release/flock.keystore
 # (never committed; back it up). Without it the build falls back to a
@@ -34,7 +40,9 @@
 #
 # Environment (all optional): ANDROID_HOME (default ~/Android/Sdk),
 # ANDROID_NDK_HOME (default: newest NDK), BUILD_TOOLS, PLATFORM, ABI, PROFILE,
-# DIAG, JOBS (default 4), NICE (default 10), CARGO_TARGET_DIR
+# DIAG, ALLOW_DIAG_RELEASE_KEY, KIT (the nostr-release-kit checkout; default
+# ../forgesworn/nostr-release-kit beside this repo), JOBS (default 4), NICE
+# (default 10), CARGO_TARGET_DIR
 # (default ~/.cache/twangthang-target, a target directory shared with the
 # sibling Twang Thang and Stampede workspaces to save disk and build time), OUT,
 # KEYSTORE.
@@ -46,6 +54,10 @@ REPO="$(cd "$HERE/.." && pwd)"
 ANDROID_DIR="$REPO/app/android"
 LIB=libgameflock.so
 APP_ID=org.decented.gameflock
+# nostr-release-kit: its android/java is compiled into the APK, its tests and
+# vectors run below. Not yet published, so a sibling checkout (a git dependency
+# in app/Cargo.toml and a pinned checkout here once it is).
+KIT="${KIT:-$REPO/../forgesworn/nostr-release-kit}"
 
 # ── Config ──────────────────────────────────────────────────────────────────
 SDK="${ANDROID_HOME:-$HOME/Android/Sdk}"
@@ -62,6 +74,11 @@ RELEASE_KEYSTORE="$HOME/.flock-release/flock.keystore"
 if [ -z "${KEYSTORE:-}" ] && [ -f "$RELEASE_KEYSTORE" ]; then KEYSTORE="$RELEASE_KEYSTORE"; fi
 KEYSTORE="${KEYSTORE:-$CACHE/debug.keystore}"
 DIAG="${DIAG:-0}"
+# A diagnostic build is debuggable: it must never carry the release signature.
+if [ "$DIAG" = "1" ] && [ "$KEYSTORE" = "$RELEASE_KEYSTORE" ] && [ "${ALLOW_DIAG_RELEASE_KEY:-0}" != "1" ]; then
+    echo "ERROR: DIAG=1 would sign a debuggable APK with the release keystore; use the throwaway key (KEYSTORE=...) or set ALLOW_DIAG_RELEASE_KEY=1" >&2
+    exit 1
+fi
 MIN_SDK="$(sed -n 's/.*minSdkVersion="\([0-9]*\)".*/\1/p' "$ANDROID_DIR/AndroidManifest.xml" | head -1)"
 
 for tool in aapt2 zipalign apksigner; do
@@ -71,6 +88,7 @@ for tool in javac; do command -v "$tool" >/dev/null || { echo "ERROR: $tool not 
 [ -x "$BUILD_TOOLS/d8" ] || { echo "ERROR: d8 not in $BUILD_TOOLS" >&2; exit 1; }
 [ -f "$PLATFORM/android.jar" ] || { echo "ERROR: no android.jar in $PLATFORM" >&2; exit 1; }
 [ -d "$NDK" ] || { echo "ERROR: NDK not found (set ANDROID_NDK_HOME)" >&2; exit 1; }
+[ -d "$KIT/android/java/dev/forgesworn/release" ] || { echo "ERROR: nostr-release-kit not found at $KIT (set KIT)" >&2; exit 1; }
 command -v cargo-ndk >/dev/null || { echo "ERROR: cargo-ndk missing (cargo install cargo-ndk)" >&2; exit 1; }
 case "$PROFILE" in release|debug) ;; *) echo "ERROR: PROFILE must be release or debug" >&2; exit 1 ;; esac
 case "$OUT" in "$REPO"|"$REPO"/*) echo "ERROR: OUT must be outside the repo (APKs are never committed)" >&2; exit 1 ;; esac
@@ -150,23 +168,27 @@ echo ">>> [2/6] aapt2 compile + link (versionCode=$VERSION_CODE versionName=$VER
 # ── 3. Java -> classes.dex ─────────────────────────────────────────────────
 # --release 11 is the lowest javac 21 accepts without a warning; d8 desugars
 # for minSdk (lambdas included).
-echo ">>> [3/6] javac + d8 (app/android/java -> classes.dex, minSdk=$MIN_SDK)"
+echo ">>> [3/6] javac + d8 (app/android/java + the kit's android/java -> classes.dex, minSdk=$MIN_SDK)"
 mkdir -p "$STAGE/classes" "$STAGE/dex" "$STAGE/test-classes"
-find "$ANDROID_DIR/java" -name '*.java' | sort > "$STAGE/sources.txt"
+find "$ANDROID_DIR/java" "$KIT/android/java" -name '*.java' | sort > "$STAGE/sources.txt"
 javac --release 11 -Xlint:all -d "$STAGE/classes" -cp "$PLATFORM/android.jar" @"$STAGE/sources.txt"
 
-# Framing (pure java.io) and ApkCheck (the package/certificate comparison that
-# gates every install, tested against the vectors the Rust mirror uses too) are
-# unit-tested on the host JDK; the tests are not in the APK.
+# Framing (pure java.io) and the kit's ApkCheck (the package/certificate comparison
+# that gates every install, tested against the vectors the kit's Rust mirror uses
+# too) and RedirectRule (which redirects a download may follow) are unit-tested on
+# the host JDK; the tests are not in the APK.
 command -v java >/dev/null || { echo "ERROR: java not on PATH (a JDK is needed)" >&2; exit 1; }
 javac --release 11 -Xlint:all -d "$STAGE/test-classes" \
     "$ANDROID_DIR/java/org/decented/gameflock/Framing.java" \
     "$ANDROID_DIR/test/org/decented/gameflock/FramingTest.java"
 java -cp "$STAGE/test-classes" org.decented.gameflock.FramingTest
 javac --release 11 -Xlint:all -d "$STAGE/test-classes" \
-    "$ANDROID_DIR/java/org/decented/gameflock/ApkCheck.java" \
-    "$ANDROID_DIR/test/org/decented/gameflock/ApkCheckTest.java"
-java -cp "$STAGE/test-classes" org.decented.gameflock.ApkCheckTest "$ANDROID_DIR/test/apk-check-vectors.tsv"
+    "$KIT/android/java/dev/forgesworn/release/ApkCheck.java" \
+    "$KIT/android/test/dev/forgesworn/release/ApkCheckTest.java" \
+    "$KIT/android/java/dev/forgesworn/release/RedirectRule.java" \
+    "$KIT/android/test/dev/forgesworn/release/RedirectRuleTest.java"
+java -cp "$STAGE/test-classes" dev.forgesworn.release.ApkCheckTest "$KIT/vectors/apk-check-vectors.tsv"
+java -cp "$STAGE/test-classes" dev.forgesworn.release.RedirectRuleTest
 
 # Every `native` method BtBridge declares must be a Java_* symbol the .so
 # exports (ble_android.rs also registers them with RegisterNatives).
@@ -213,7 +235,9 @@ if [ ! -f "$KEYSTORE" ]; then
         -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
         -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
 fi
-APK="$OUT/gameflock_${VERSION}_${ABI}.apk"
+APK_SUFFIX=""
+[ "$DIAG" = "1" ] && APK_SUFFIX="-diag"
+APK="$OUT/gameflock_${VERSION}_${ABI}${APK_SUFFIX}.apk"
 echo ">>> [6/6] apksigner ($KEYSTORE)"
 "$BUILD_TOOLS/apksigner" sign \
     --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
@@ -222,12 +246,17 @@ echo ">>> [6/6] apksigner ($KEYSTORE)"
 
 rm -f "$OUT/unaligned.apk" "$OUT/aligned.apk" "$OUT/res.zip" "$APK.idsig"
 rm -rf "$STAGE"
-ln -sf "$(basename "$APK")" "$OUT/gameflock.apk"
+# The stable name only ever points at a shippable build, never a diagnostic one.
+INSTALL_APK="$APK"
+if [ "$DIAG" != "1" ]; then
+    ln -sf "$(basename "$APK")" "$OUT/gameflock.apk"
+    INSTALL_APK="$OUT/gameflock.apk"
+fi
 
 echo
 echo "BUILT: $APK ($(du -h "$APK" | cut -f1))"
 "$BUILD_TOOLS/aapt2" dump badging "$APK" | grep -E "^(package|minSdkVersion|targetSdkVersion|application-label|native-code|uses-permission)" || true
 echo
-echo "  adb install -r $OUT/gameflock.apk"
+echo "  adb install -r $INSTALL_APK"
 echo "  adb shell am start -n $APP_ID/.FlockActivity"
-echo "  adb logcat -s flock:V"
+echo "  adb logcat -s flock:V release-kit:V"

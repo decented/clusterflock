@@ -25,7 +25,12 @@ flock-session = { path = "../crates/flock-session" }
 flock-render = { path = "../crates/flock-render" }
 flock-audio = { path = "../crates/flock-audio" }
 # The daily run's seed: a verified Bitcoin block header, fetched on a background thread.
-flock-daily = { path = "../crates/flock-daily", features = ["fetch"] }
+# Becomes a pinned git dependency once the repo is published.
+blockseed = { path = "../../forgesworn/blockseed", features = ["fetch"] }
+# The release half: the pinned-key release event, the Updater and the More games Catalog,
+# the Android installer, and the Java it calls (tools/build-apk.sh compiles that in).
+# Becomes a pinned git dependency once the repo is published.
+nostr-release-kit = { path = "../../forgesworn/nostr-release-kit" }
 # Identity (the device key) and the default relay list, for the My Signet account.
 decented-net = { package = "fray-net", path = "../../forgesworn/fray/crates/decented-net" }
 # The shared relay pool (health, address normalising) and the one-shot relay
@@ -53,11 +58,16 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
+# Screenshots stage an offer with the kit's `testing` methods (`demo_offer` swaps the pinned release
+# key for a throwaway one): desktop only, never in the Android build.
+nostr-release-kit = { path = "../../forgesworn/nostr-release-kit", features = ["testing"] }
 # No clipboard backend: text goes through platform::os (xclip / wl-copy).
 egui-winit = { version = "0.34", default-features = false, features = ["x11", "wayland"] }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
+# The kit's Android installer (JNI into dev.forgesworn.release.Updater).
+nostr-release-kit = { path = "../../forgesworn/nostr-release-kit", features = ["android"] }
 egui-winit = { version = "0.34", default-features = false, features = ["android-native-activity"] }
 winit = { version = "0.30", features = ["android-native-activity"] }
 android-activity = { version = "0.6", features = ["native-activity"] }

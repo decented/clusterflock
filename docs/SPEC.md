@@ -28,7 +28,7 @@ crates/flock-core     pure simulation, no I/O, no rendering, no glam  (this spec
 crates/flock-session  match protocol over Fray: LocalRun, host authority, ClientSession, lobby (§10)
 crates/flock-render   race-render fork: farm course, floppy Nostrich, props, ghosts (§11)
 crates/flock-audio    race-audio fork: synthesised sounds (§12)
-crates/flock-daily    the daily run's Bitcoin-block seed: verification and fetch (§14)
+blockseed (external)  the daily run's Bitcoin-block seed: verification and fetch (§14)
 app                   package `gameflock`: shell, screens, platform, BLE, account (§13)
 ```
 
@@ -449,28 +449,36 @@ Screens (portrait, Stampede shell style, Twang-quality polish):
 
 One track per UTC day for every player, with no server of ours. The seed comes from the
 Bitcoin blockchain. A public block explorer is only the transport: the phone checks
-everything itself. Code: `crates/flock-daily`. The run itself is `MatchConfig::daily(seed)`
+everything itself. Code: the `blockseed` crate (github.com/forgesworn/blockseed), with the domain
+`clusterflock-daily-v1` and User-Agent `clusterflock` set in `app/src/daily.rs`. The run itself is
+`MatchConfig::daily(seed)`
 (solo rules, generator version `GENERATOR_VERSION`).
 
 ### 14.1 The rule
 
-- Day `D = floor(t / 86400)` in UTC, with `t` a Unix time.
-- The **daily block** for day `D` is the lowest-height block whose header timestamp is
-  `>= D * 86400` and whose six predecessors all have timestamps `< D * 86400`.
-- The **current daily** is the one for the latest day that has such a block. Until today's
-  exists and has at least three blocks on top of it (so it cannot be orphaned away), yesterday's stays live. The daily's public number is that block's **height**.
+The rule is blockseed's (`docs/RULE.md` in that repository is normative); in short:
+
+- Day `D = floor(t / 86400)` in UTC, with `t` a Unix time; midnight `M = D * 86400`.
+- `MTP(B)` is the median of the timestamps of the 11 blocks before `B`.
+- The **anchor** `A` is the lowest-height block with `MTP(A) >= M - 3 h`. The **daily block**
+  of day `D` is the lowest-height block at or above `A` whose own timestamp is `>= M`. On every
+  ordinary day this is simply the first block stamped at or after midnight; the anchor makes the
+  answer the same whenever it is asked, even when a block near midnight is stamped out of order.
+- The **current daily** is the one for the latest day that has such a block with at least three
+  linked blocks on top of it. Until then yesterday's stays live. The daily's public number is
+  that block's **height**.
 - "Now" is the timestamp of the tip block, never the phone clock.
 
 ### 14.2 Verification (the explorer is untrusted)
 
-For every header used: parse the 80 bytes; block hash = double SHA-256 of the header (shown
-byte-reversed); decode compact `bits` to a 256-bit target; require `hash <= target`;
-require `target <=` the **floor target** (`FLOOR_BITS = 0x171c25a6`, the target of
-difficulty 1.0e13: 2025+ mainnet is above 1e14, and forging one header at 1e13 takes about
-4e22 hashes); require each header's previous-hash to equal the hash of the header before it
-across the whole window. The rule of 14.1 is applied only to such a window, and the window
-must show the first six blocks before midnight, else the result is inconclusive. A height is
-the explorer's claim, so the chosen height's hash is cross-checked on a second explorer.
+For every header used: parse the 80 bytes; block hash = double SHA-256 of the header; require
+`hash <=` the target from `bits` and the target `<=` a difficulty floor; require each header's
+previous-hash to equal the hash of the header before it across the whole verified segment, and
+`bits` to equal the predecessor's except at a retarget height (multiple of 2016), where it may
+change by at most a factor of 4. The three confirmations are linked, checked descendants, not a
+height claim. The chosen block's hash and the tip height are cross-checked on a second explorer;
+an unreachable second explorer is tolerated and recorded (see blockseed's README for the trust
+model).
 
 ### 14.3 Seed
 
@@ -482,7 +490,7 @@ displayed) gives `0x4b9cc6b9ba92b55f`.
 ### 14.4 Fetch
 
 Blocking, on a background thread, rustls with the bundled webpki roots (ureq 2.x), a plain
-`User-Agent: clusterflock`, 8 s per request, at most 40 requests. Esplora REST, primary
+`User-Agent: clusterflock`, 8 s per request, a bounded request budget (blockseed's `MAX_REQUESTS`). Esplora REST, primary
 `https://mempool.space/api`, cross-check `https://blockstream.info/api`:
 `GET /blocks/tip/height`, `GET /block-height/:height` (hash, plain text),
 `GET /block/:hash/header` (80-byte header, hex), and on mempool.space only

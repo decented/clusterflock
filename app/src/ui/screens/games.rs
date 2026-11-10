@@ -1,12 +1,12 @@
 //! More games (spec 20.3): the built-in catalog of other games, each with what
 //! the player can do about it: Get, Update or Open. The relays are asked once, when
-//! the screen opens (`games::Games`); installs go through the shared updater, so a
+//! the screen opens (`nostr_release_kit::Catalog`); installs go through the shared updater, so a
 //! download goes on if the player leaves this screen.
 
 use super::common;
 use super::{Ctx, Screen, Transition};
-use crate::games::{GameStatus, Games, CATALOG};
-use crate::platform::os::ApkStatus;
+use crate::games::ICONS;
+use nostr_release_kit::{ApkStatus, Catalog, EntryStatus};
 use crate::ui::art::{self, rgba};
 use crate::ui::widgets::{self, Btn, S2, S3};
 use crate::ui::{feedback, theme};
@@ -26,7 +26,7 @@ enum Sample {
 
 pub struct GamesScreen {
     t: f32,
-    games: Games,
+    games: Catalog,
     started: bool,
     sample: Option<Sample>,
     scroll: f32,
@@ -40,7 +40,7 @@ impl Default for GamesScreen {
 
 impl GamesScreen {
     pub fn new() -> GamesScreen {
-        GamesScreen { t: 0.0, games: Games::new(), started: false, sample: None, scroll: 0.0 }
+        GamesScreen { t: 0.0, games: crate::release::catalog(), started: false, sample: None, scroll: 0.0 }
     }
 
     fn staged(s: Sample) -> GamesScreen {
@@ -63,14 +63,21 @@ impl GamesScreen {
         Self::staged(Sample::Open)
     }
 
+    /// Screenshots are a desktop path: the kit's staging methods are compiled in only when its
+    /// `testing` feature is on, which `app/Cargo.toml` turns on for non-Android builds only.
+    #[cfg(target_os = "android")]
+    fn stage(&mut self, _ctx: &mut Ctx, _s: Sample) {}
+
     /// Set up the staged state (once, screenshots only).
+    #[cfg(not(target_os = "android"))]
     fn stage(&mut self, ctx: &mut Ctx, s: Sample) {
-        use crate::games::Fetch;
+        use nostr_release_kit::{CatalogEntry, Fetch};
+        let entries = self.games.entries().to_vec();
         // The first game shows the staged state; any other shows an installed, current game.
-        let release = |e: &crate::games::GameEntry| crate::update::demo_release(e.channel, "0.4.1", 9_800_000, e.cert.unwrap_or(""));
-        let e = &CATALOG[0];
-        let others = || CATALOG.iter().skip(1).map(|_| Some(4001)).collect::<Vec<_>>();
-        let first_release = |r: Result<Option<crate::update::Release>, crate::games::CertMismatch>| std::iter::once(r).chain(CATALOG.iter().skip(1).map(|e| Ok(Some(release(e))))).collect::<Vec<_>>();
+        let release = |e: &CatalogEntry| nostr_release_kit::updater::demo_release(e.channel, "0.4.1", 9_800_000, e.cert.unwrap_or(""));
+        let e = &entries[0];
+        let others = || entries.iter().skip(1).map(|_| Some(4001)).collect::<Vec<_>>();
+        let first_release = |r: Result<Option<nostr_release_kit::Release>, nostr_release_kit::CertMismatch>| std::iter::once(r).chain(entries.iter().skip(1).map(|e| Ok(Some(release(e))))).collect::<Vec<_>>();
         let installed = |first: Option<u32>| std::iter::once(first).chain(others()).collect::<Vec<_>>();
         match s {
             Sample::Get => self.games.demo(Fetch::Answered, installed(None), first_release(Ok(Some(release(e))))),
@@ -78,7 +85,7 @@ impl GamesScreen {
             Sample::Open => self.games.demo(Fetch::Answered, installed(Some(4001)), first_release(Ok(Some(release(e))))),
             Sample::Downloading => {
                 self.games.demo(Fetch::Answered, installed(None), first_release(Ok(Some(release(e)))));
-                ctx.updates.demo_game_state(e.package, ApkStatus::Downloading { done: 3_900_000, total: 9_800_000 });
+                ctx.updates.demo_sibling_state(e.package, ApkStatus::Downloading { done: 3_900_000, total: 9_800_000 });
             }
         }
     }
@@ -99,20 +106,20 @@ fn size_text(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / 1_000_000.0)
 }
 
-fn card_view(status: &GameStatus, install: Option<&ApkStatus>) -> CardView {
+fn card_view(status: &EntryStatus, install: Option<&ApkStatus>) -> CardView {
     let dim = theme::TEXT_DIM;
     let mut v = match status {
-        GameStatus::ComingSoon => CardView { line: "Coming soon".into(), tone: dim, progress: None, button: ("Coming soon", false, false), cancel: false },
-        GameStatus::Checking => CardView { line: "Looking for the latest release\u{2026}".into(), tone: dim, progress: None, button: ("Get", true, false), cancel: false },
-        GameStatus::CantReach => CardView { line: "Couldn't reach the relays".into(), tone: theme::LASER, progress: None, button: ("Get", true, false), cancel: false },
-        GameStatus::NoRelease => CardView { line: "No release published yet".into(), tone: dim, progress: None, button: ("Get", true, false), cancel: false },
-        GameStatus::WrongKey { version } => CardView { line: format!("Version {version} is signed with a different key, so it isn't offered."), tone: theme::GOLD, progress: None, button: ("Get", true, false), cancel: false },
-        GameStatus::Get { version, size } => CardView { line: format!("Version {version} \u{b7} {}", size_text(*size)), tone: theme::SAND, progress: None, button: ("Get", true, true), cancel: false },
-        GameStatus::Open => CardView { line: "Installed".into(), tone: theme::MINT, progress: None, button: ("Open", false, true), cancel: false },
-        GameStatus::Update { version, size } => CardView { line: format!("Update to {version} \u{b7} {}", size_text(*size)), tone: theme::ACCENT, progress: None, button: ("Update", true, true), cancel: false },
+        EntryStatus::ComingSoon => CardView { line: "Coming soon".into(), tone: dim, progress: None, button: ("Coming soon", false, false), cancel: false },
+        EntryStatus::Checking => CardView { line: "Looking for the latest release\u{2026}".into(), tone: dim, progress: None, button: ("Get", true, false), cancel: false },
+        EntryStatus::CantReach => CardView { line: "Couldn't reach the relays".into(), tone: theme::LASER, progress: None, button: ("Get", true, false), cancel: false },
+        EntryStatus::NoRelease => CardView { line: "No release published yet".into(), tone: dim, progress: None, button: ("Get", true, false), cancel: false },
+        EntryStatus::WrongKey { version } => CardView { line: format!("Version {version} is signed with a different key, so it isn't offered."), tone: theme::GOLD, progress: None, button: ("Get", true, false), cancel: false },
+        EntryStatus::Get { version, size } => CardView { line: format!("Version {version} \u{b7} {}", size_text(*size)), tone: theme::SAND, progress: None, button: ("Get", true, true), cancel: false },
+        EntryStatus::Open => CardView { line: "Installed".into(), tone: theme::MINT, progress: None, button: ("Open", false, true), cancel: false },
+        EntryStatus::Update { version, size } => CardView { line: format!("Update to {version} \u{b7} {}", size_text(*size)), tone: theme::ACCENT, progress: None, button: ("Update", true, true), cancel: false },
     };
     // A download for this game overrides what the card says.
-    if matches!(status, GameStatus::Get { .. } | GameStatus::Update { .. } | GameStatus::Open) {
+    if matches!(status, EntryStatus::Get { .. } | EntryStatus::Update { .. } | EntryStatus::Open) {
         match install {
             Some(ApkStatus::Downloading { done, total }) => {
                 let pct = done.saturating_mul(100).checked_div(*total).map_or(0, |p| p.min(100));
@@ -179,8 +186,9 @@ impl Screen for GamesScreen {
         let mut scroll = self.scroll;
         let mut act: Option<(usize, bool)> = None; // (entry, cancel?)
         let mut open: Option<usize> = None;
-        let statuses: Vec<GameStatus> = (0..CATALOG.len()).map(|i| self.games.status(i)).collect();
-        let installs: Vec<Option<ApkStatus>> = CATALOG.iter().map(|e| ctx.updates.game_status(e.package).cloned()).collect();
+        let entries = self.games.entries().to_vec();
+        let statuses: Vec<EntryStatus> = (0..entries.len()).map(|i| self.games.status(i)).collect();
+        let installs: Vec<Option<ApkStatus>> = entries.iter().map(|e| ctx.updates.sibling_status(e.package).cloned()).collect();
         common::page(ctx.viewport.screen, tm, ui, 0.5, |ui, _| {
             let hd = widgets::header(ui, safe, "More games", widgets::enter(t, 0));
             if hd.back.clicked() {
@@ -190,7 +198,7 @@ impl Screen for GamesScreen {
             let body = hd.body;
             let portrait = common::Layout::new(safe).portrait;
             let card_h = if portrait { 210.0 } else { CARD_H };
-            let total = CATALOG.len() as f32 * (card_h + S2);
+            let total = entries.len() as f32 * (card_h + S2);
             let max_scroll = (total - body.height()).max(0.0);
             let drag = ui.interact(body, egui::Id::new("games-scroll"), Sense::drag());
             if drag.dragged() {
@@ -200,7 +208,7 @@ impl Screen for GamesScreen {
             ui.set_clip_rect(body.expand2(vec2(8.0, 0.0)));
             let w = body.width().min(720.0);
             let x0 = body.center().x - w / 2.0;
-            for (i, e) in CATALOG.iter().enumerate() {
+            for (i, e) in entries.iter().enumerate() {
                 let r = Rect::from_min_size(pos2(x0, body.top() + i as f32 * (card_h + S2) - scroll), vec2(w, card_h));
                 if !body.expand(0.5).contains_rect(r) {
                     continue;
@@ -212,7 +220,7 @@ impl Screen for GamesScreen {
                     widgets::panel(&p, r, 20.0);
                     // icon
                     let ic = Rect::from_center_size(pos2(r.left() + 16.0 + 34.0, r.top() + if portrait { 48.0 } else { r.height() * 0.5 }), vec2(68.0, 68.0));
-                    let tex = art::game_icon(ui.ctx(), e.package, e.icon);
+                    let tex = art::game_icon(ui.ctx(), e.package, ICONS[i]);
                     widgets::soft_shadow(&p, ic, 16.0, 4.0, 10.0, 0.5);
                     art::sprite(&p, tex.id(), ic.center(), ic.size(), 0.0, false, Color32::WHITE);
                     p.rect_stroke(ic, egui::CornerRadius::same(14), Stroke::new(1.5_f32, rgba(255, 255, 255, 0.18)), egui::StrokeKind::Inside);
@@ -238,7 +246,7 @@ impl Screen for GamesScreen {
                     if widgets::button(ui, b, &format!("game-{i}"), &btn.size(18.0).enabled(cv.button.2)).clicked() {
                         if cv.cancel {
                             act = Some((i, true));
-                        } else if matches!(statuses[i], GameStatus::Open) {
+                        } else if matches!(statuses[i], EntryStatus::Open) {
                             open = Some(i);
                         } else {
                             act = Some((i, false));
@@ -276,18 +284,18 @@ mod tests {
 
     #[test]
     fn a_card_says_what_is_going_on() {
-        let get = GameStatus::Get { version: "1.0.0".into(), size: 9_800_000 };
+        let get = EntryStatus::Get { version: "1.0.0".into(), size: 9_800_000 };
         let v = card_view(&get, None);
         assert_eq!((v.line.as_str(), v.button), ("Version 1.0.0 \u{b7} 9.8 MB", ("Get", true, true)));
         let v = card_view(&get, Some(&ApkStatus::Downloading { done: 50, total: 100 }));
         assert_eq!((v.line.as_str(), v.cancel, v.progress), ("Downloading\u{2026} 50%", true, Some(0.5)));
         assert_eq!(card_view(&get, Some(&ApkStatus::Failed("nope".into()))).line, "nope");
-        assert_eq!(card_view(&GameStatus::NoRelease, None).line, "No release published yet");
-        assert!(!card_view(&GameStatus::NoRelease, None).button.2, "nothing to get");
-        assert_eq!(card_view(&GameStatus::CantReach, None).line, "Couldn't reach the relays");
-        assert_eq!(card_view(&GameStatus::ComingSoon, None).line, "Coming soon");
-        assert_eq!(card_view(&GameStatus::Open, None).button, ("Open", false, true));
+        assert_eq!(card_view(&EntryStatus::NoRelease, None).line, "No release published yet");
+        assert!(!card_view(&EntryStatus::NoRelease, None).button.2, "nothing to get");
+        assert_eq!(card_view(&EntryStatus::CantReach, None).line, "Couldn't reach the relays");
+        assert_eq!(card_view(&EntryStatus::ComingSoon, None).line, "Coming soon");
+        assert_eq!(card_view(&EntryStatus::Open, None).button, ("Open", false, true));
         // A leftover download state never changes a game that has nothing to get.
-        assert_eq!(card_view(&GameStatus::NoRelease, Some(&ApkStatus::Downloading { done: 1, total: 2 })).line, "No release published yet");
+        assert_eq!(card_view(&EntryStatus::NoRelease, Some(&ApkStatus::Downloading { done: 1, total: 2 })).line, "No release published yet");
     }
 }

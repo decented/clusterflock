@@ -458,6 +458,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockseed"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+ "ureq",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1236,15 +1245,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "flock-daily"
-version = "0.2.0"
-dependencies = [
- "serde_json",
- "sha2 0.10.9",
- "ureq",
-]
-
-[[package]]
 name = "flock-render"
 version = "0.2.0"
 dependencies = [
@@ -1419,6 +1419,7 @@ dependencies = [
  "android-activity",
  "android_logger",
  "base64",
+ "blockseed",
  "bytemuck",
  "decented-signet",
  "egui",
@@ -1427,7 +1428,6 @@ dependencies = [
  "env_logger",
  "flock-audio",
  "flock-core",
- "flock-daily",
  "flock-render",
  "flock-session",
  "fray-net",
@@ -1438,6 +1438,7 @@ dependencies = [
  "log",
  "ndk-context",
  "nostr",
+ "nostr-release-kit",
  "png",
  "pollster",
  "rustls",
@@ -2287,6 +2288,18 @@ dependencies = [
  "serde_json",
  "unicode-normalization",
  "url",
+]
+
+[[package]]
+name = "nostr-release-kit"
+version = "0.1.0"
+dependencies = [
+ "jni 0.21.1",
+ "log",
+ "ndk-context",
+ "nostr",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

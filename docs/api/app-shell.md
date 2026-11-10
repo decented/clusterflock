@@ -19,9 +19,9 @@ need to touch `platform/`, `app.rs` or `render/`.
 | `ui/theme.rs` | palette, fonts, `install` |
 | `account.rs` | My Signet sign-in and online approval (`Account`, over `decented-signet`); `Account::identity_for_online` gates real network use |
 | `ui/screens/` | `Screen`, `Transition`, `Router`, `Ctx`, registry `SCREENS`; `splash`, `home` (placeholder buttons), `settings` (+ `settings_cards`: UPDATES and MORE GAMES), `games` (More games), `account`, `common` |
-| `update.rs` | the in-app updater (`Updater`, on `Ctx::updates`): checks one signed kind-30063 release event per launch, downloads and verifies the APK, hands it to Android's installer. `RELEASE_PUBKEY_HEX` pins the release key (were it `None`, Settings would say "Updates aren't set up for this build yet" and nothing is fetched) |
-| `games.rs`, `nostr_fetch.rs` | More games: the built-in `CATALOG` (Twang Thang, Stampede; pins copied from their own catalogs) and the one-shot relay reader both features use |
-| `platform/updater_android.rs` | Android half of installs: calls `Updater.java` (`Platform::apk_*`, `installed_version_code`, `open_package`) |
+| `release.rs` | Cluster Flock's values for the release kit (`nostr-release-kit`): `RELEASE_CHANNEL`, `RELEASE_RELAYS`, `RELEASE_PUBKEY_HEX`, `OWN_PACKAGE`, and the `Config` / `CatalogConfig` the engine builds from them (`update_config`, `catalog_config`). The in-app updater is the kit's `Updater` (on `Ctx::updates`): checks one signed kind-30063 release event per launch, downloads and verifies the APK, hands it to Android's installer. Pins are tested there (`tools/release/release.json` must agree) |
+| `games.rs`, `nostr_fetch.rs` | More games: the built-in `CATALOG_ENTRIES` and icons (Twang Thang, Stampede; pins copied from their own catalogs; the kit's `Catalog` is built from them) and the one-shot relay reader (`AppFetcher`, the kit's `ReleaseFetcher`) both features use |
+| `platform/os.rs` (`Platform: ApkInstaller`) | Installs: the kit's `ApkInstaller` is a supertrait of `Platform`; desktop has the "cannot" defaults, `RecordingPlatform` wraps the kit's `RecordingInstaller`, and Android delegates to the kit's `android::AndroidInstaller` (Java: the kit's `dev.forgesworn.release.Updater`, compiled in by `tools/build-apk.sh`) |
 | `sound.rs` | the app's one `flock_audio::Audio` |
 
 Frame: `engine.frame` -> `render::encode_frame` = clear to `Screen::clear_color`,
@@ -156,11 +156,12 @@ size, package and certificate, then Android shows its own install prompt (the
 app needs the "Install unknown apps" switch; nothing is silent).
 
 Release identity (Cluster Flock's own): package `org.decented.gameflock`,
-channel `gameflock-android-apk`. The release pubkey (`update.rs`
-`RELEASE_PUBKEY_HEX`) and signing cert
-(`tools/release/release-helpers.mjs` `EXPECTED_CERT_SHA256`) are pinned (see
-`README.md`, Releases). Publishing is `tools/release/publish-release.mjs`
-(Blossom upload + one signed event; see its header). Screenshots:
+channel `gameflock-android-apk`. The release pubkey (`release.rs`
+`RELEASE_PUBKEY_HEX`) and signing cert (`tools/release/release.json`
+`expected_cert_sha256`) are pinned (see `README.md`, Releases). Publishing is
+`tools/release/publish.sh`, which runs nostr-release-kit's publisher with
+`tools/release/release.json` (Blossom upload + one signed event; see the kit's
+README). Screenshots:
 `--shot more_games`, `more_games_none_sample`, `more_games_downloading_sample`,
 `more_games_open_sample`, `settings_cards`, `settings_updates_sample`,
 `settings_downloading_sample`.
