@@ -1230,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "flock-audio"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "log",
  "rodio",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "flock-render"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bytemuck",
  "glam",
@@ -1261,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "flock-session"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bincode",
  "decented-signet",
@@ -1421,7 +1421,7 @@ dependencies = [
 
 [[package]]
 name = "gameflock"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "android-activity",
  "android_logger",

@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/flock-core", "crates/flock-session", "crates/flock-render", "crates/flock-audio", "app"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "MIT"
 authors = ["decented"]
