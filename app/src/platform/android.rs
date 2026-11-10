@@ -440,6 +440,10 @@ impl ApkInstaller for AndroidPlatform {
         AndroidInstaller.can_install_apk()
     }
 
+    fn running_package(&mut self) -> Option<String> {
+        AndroidInstaller.running_package()
+    }
+
     fn own_cert_sha256(&mut self) -> Option<String> {
         AndroidInstaller.own_cert_sha256()
     }

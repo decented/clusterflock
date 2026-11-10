@@ -2294,7 +2294,7 @@ dependencies = [
 [[package]]
 name = "nostr-release-kit"
 version = "0.1.0"
-source = "git+https://github.com/forgesworn/nostr-release-kit?rev=47266c61f5e9401630fb1b2490055640a1861484#47266c61f5e9401630fb1b2490055640a1861484"
+source = "git+https://github.com/forgesworn/nostr-release-kit?rev=1c16b3e49433e635263b73e0efd600e8fbe647b3#1c16b3e49433e635263b73e0efd600e8fbe647b3"
 dependencies = [
  "jni 0.21.1",
  "log",

@@ -117,7 +117,11 @@ fn pipe_to(cmd: &str, args: &[&str], text: &str) -> Result<(), String> {
 
 // Desktop cannot install an APK: the kit's defaults.
 #[cfg(not(target_os = "android"))]
-impl ApkInstaller for DesktopPlatform {}
+impl ApkInstaller for DesktopPlatform {
+    fn running_package(&mut self) -> Option<String> {
+        None
+    }
+}
 
 #[cfg(not(target_os = "android"))]
 impl Platform for DesktopPlatform {
@@ -277,6 +281,10 @@ impl Platform for RecordingPlatform {
 impl ApkInstaller for RecordingPlatform {
     fn can_install_apk(&self) -> bool {
         self.installer.can_install_apk()
+    }
+
+    fn running_package(&mut self) -> Option<String> {
+        self.installer.running_package()
     }
 
     fn own_cert_sha256(&mut self) -> Option<String> {
