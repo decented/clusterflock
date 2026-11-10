@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window background: the farm backdrop's top sky colour (art.rs SKY_TOP), so launch never flashes purple. -->
+    <color name="flock_bg">#4F9BE6</color>
+</resources>

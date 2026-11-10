@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["crates/flock-core", "crates/flock-session", "crates/flock-render", "crates/flock-audio", "crates/flock-daily", "app"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+authors = ["decented"]
+
+# Same profiles as Twang Thang on purpose: workspaces that share a
+# CARGO_TARGET_DIR with identical profiles reuse the compiled
+# wgpu/winit/egui/quinn/nostr artifacts.
+[profile.dev]
+debug = 0
+opt-level = 1
+incremental = false
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+strip = true
+codegen-units = 4

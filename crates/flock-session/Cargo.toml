@@ -1,0 +1,32 @@
+[package]
+name = "flock-session"
+description = "Cluster Flock's match protocol: LocalRun, host authority, ClientSession, lobby, transports (loopback + QUIC over fray-net)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "flock_session"
+path = "src/lib.rs"
+
+[dependencies]
+flock-core = { path = "../flock-core" }
+bincode = "1.3"
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+rand = { version = "0.8", default-features = false, features = ["std"] }
+rand_pcg = "0.3"
+# QUIC rooms, the LAN beacon and Bluetooth virtual links; the persona check.
+decented-net = { package = "fray-net", path = "../../../forgesworn/fray/crates/decented-net", optional = true }
+decented-signet = { path = "../../../TwangThang/crates/decented-signet", optional = true }
+nostr = { version = "=0.44.8", default-features = false, features = ["nip44"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[features]
+default = ["native"]
+native = ["dep:decented-net", "dep:decented-signet", "dep:nostr", "dep:serde_json"]
+
+[[bin]]
+name = "flock-headless"
+path = "src/bin/flock-headless.rs"
+required-features = ["native"]

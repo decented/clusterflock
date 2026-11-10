@@ -1,0 +1,24 @@
+[package]
+name = "flock-render"
+description = "Cluster Flock's wgpu 3D renderer: procedural low-poly meshes, ostrich rig, particles, cameras, mirror pass."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wgpu = { version = "29", default-features = false, features = ["std", "parking_lot", "wgsl", "vulkan", "gles"] }
+glam = "0.29"
+bytemuck = { version = "1", features = ["derive"] }
+log = "0.4"
+
+[dev-dependencies]
+png = "0.18"
+pollster = "0.4"
+
+[[example]]
+name = "farm_shot"
+path = "examples/farm_shot.rs"
+
+[[example]]
+name = "icon"
+path = "examples/icon.rs"

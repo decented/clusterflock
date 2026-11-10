@@ -1,0 +1,16 @@
+target/
+*.apk
+docs/local
+.env
+.env.*
+*.keystore
+*.jks
+*.p12
+*.pfx
+docs/notes/
+tools/release/node_modules/
+*.hex
+*.pem
+*.key
+release-key*
+.flock-release/

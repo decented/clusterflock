@@ -1,0 +1,17 @@
+[package]
+name = "flock-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Cluster Flock gameplay simulation: three-lane runner, floppy Nostriches, ghost architects. Pure, deterministic, no I/O."
+
+[lib]
+name = "flock_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+rand = { version = "0.8", default-features = false, features = ["alloc"] }
+rand_pcg = { version = "0.3", features = ["serde1"] }
+log = { version = "0.4", optional = true }

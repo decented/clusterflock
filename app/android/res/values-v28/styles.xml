@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- API 28+: draw under the camera cutout (on the top edge in
+         portrait); the game pads by the cutout insets it reads over JNI. -->
+    <style name="FlockTheme" parent="@android:style/Theme.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">@color/flock_bg</item>
+        <item name="android:colorBackground">@color/flock_bg</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cluster Flock Android manifest. Built by tools/build-apk.sh with aapt2 and
+  d8: no Gradle. Forked from the Stampede shell, which was ported from Twang
+  Thang's.
+
+  hasCode="true"           Small Java classes (app/android/java):
+                           .FlockActivity extends NativeActivity to keep
+                           onNewIntent's intent and forward Bluetooth
+                           permission results, .RoomService (below), and the
+                           Bluetooth bridge BtBridge/Framing.
+                           The game is libgameflock.so, loaded by
+                           NativeActivity, which calls `android_main`. Every OS
+                           service is a JNI call from Rust
+                           (app/src/platform/android.rs).
+  android.app.lib_name     MUST match [lib] name in app/Cargo.toml.
+  launchMode="singleTask"  Exactly one activity instance: a link
+                           (gameflock://join#CODE) brings the running game
+                           forward instead of starting a second copy of the
+                           engine. The link arrives in
+                           FlockActivity.onNewIntent, which stores it with
+                           setIntent; the game reads it over JNI.
+  screenOrientation        portrait: the whole app is portrait. The camera
+                           cutout is at the top; the game reads all four insets.
+  configChanges            Swallow every config change instead of recreating the
+                           activity: a recreation means a new android_main, and
+                           winit allows one EventLoop per process, so the game
+                           ends its process when its activity is destroyed
+                           (app/src/platform/lifecycle.rs).
+  enableOnBackInvokedCallback="false"
+                           Keep KEYCODE_BACK delivered to the game (system Back
+                           = the screen's Back) instead of predictive back.
+  targetSdkVersion 35      Below 36 so predictive back stays opt-in.
+  Theme                    res/values*/styles.xml: fullscreen, no title, the
+                           dark window background (no white flash) and, on API
+                           28+, drawing under the camera cutout.
+  allowBackup="false"      Nothing leaves the device.
+
+  Permissions: INTERNET (My Signet and online play), ACCESS_NETWORK_STATE,
+  ACCESS_WIFI_STATE and CHANGE_WIFI_MULTICAST_STATE (Nearby play: the beacon
+  and the MulticastLock; ACCESS_NETWORK_STATE also lets the LAN sockets find
+  the Wi-Fi network when a VPN is up), VIBRATE (haptics, currently disabled in code), WAKE_LOCK (keep the
+  screen on during a run), FOREGROUND_SERVICE and FOREGROUND_SERVICE_DATA_SYNC
+  (RoomService below), REQUEST_INSTALL_PACKAGES (in-app updates and More games,
+  below).
+
+  In-app updates and More games (Updater.java + UpdateReceiver.java; app/src/update.rs
+  and app/src/games.rs decide what to install from a signed nostr release event):
+  REQUEST_INSTALL_PACKAGES lets the app ask Android's installer to replace itself
+  or to install a catalog game. Android keeps its own "Install unknown apps" switch
+  for this app (off by default) and always shows its own confirm prompt, so an
+  install is never silent. UpdateReceiver (not exported) gets the installer's
+  status through the PendingIntent Updater commits with; it must be in the
+  manifest because an update replaces the process. <queries> lists the catalog's
+  packages: since Android 11 an app cannot see another package (to show Get or
+  Open, and to open it) unless it asks for it here. Keep it in step with
+  app/src/games.rs CATALOG.
+
+  Bluetooth games (off-grid; BtBridge.java + app/src/platform/ble_android.rs):
+  API 31+: BLUETOOTH_SCAN (neverForLocation: we never derive location),
+  BLUETOOTH_ADVERTISE and BLUETOOTH_CONNECT, asked at runtime. API <= 30: the
+  legacy BLUETOOTH and BLUETOOTH_ADMIN (install-time) plus ACCESS_FINE_LOCATION
+  (runtime; BLE scans need it there). bluetooth_le is optional: phones without
+  it just never show Bluetooth. Bluetooth play needs API 29+ (L2CAP CoC);
+  below that the bridge reports it unsupported and the UI hides it. No
+  service is needed for BLE.
+
+  RoomService              A silent foreground service that runs only while the
+                           player has a My Signet request or an online room
+                           open, so Android keeps the network up when the player
+                           switches to My Signet and back (newer Android cuts a
+                           backgrounded app's sockets). No POST_NOTIFICATIONS
+                           request: the service counts without a visible
+                           notification.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.decented.gameflock">
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <queries>
+        <package android:name="org.decented.twangthang" />
+        <package android:name="org.decented.stampede" />
+    </queries>
+
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <uses-feature android:name="android.hardware.touchscreen.multitouch.distinct" android:required="false" />
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:label="Cluster Flock"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:appCategory="game"
+        android:hasCode="true"
+        android:enableOnBackInvokedCallback="false"
+        android:extractNativeLibs="true"
+        android:theme="@style/FlockTheme">
+
+        <activity
+            android:name=".FlockActivity"
+            android:exported="true"
+            android:label="Cluster Flock"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:theme="@style/FlockTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|navigation|screenSize|screenLayout|density|smallestScreenSize|uiMode|locale|layoutDirection|fontScale|fontWeightAdjustment|colorMode|touchscreen|mcc|mnc|grammaticalGender">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="gameflock" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Join link: gameflock://join#CODE (also the My Signet return link gameflock://signin) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="gameflock" />
+            </intent-filter>
+        </activity>
+
+        <!-- PackageInstaller session status for in-app updates and installs (Updater.java). -->
+        <receiver
+            android:name=".UpdateReceiver"
+            android:exported="false" />
+
+        <service
+            android:name=".RoomService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+    </application>
+</manifest>

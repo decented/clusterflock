@@ -1,0 +1,71 @@
+[package]
+name = "gameflock"
+description = "Cluster Flock: a portrait flock game for Android + desktop Linux."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "gameflock"
+# rlib for the desktop binary and tests, cdylib for the Android NativeActivity .so.
+crate-type = ["rlib", "cdylib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "gameflock"
+path = "src/main.rs"
+
+# Versions and features are identical to Twang Thang's on purpose:
+# workspaces that share a CARGO_TARGET_DIR with equal feature sets reuse the
+# compiled wgpu/winit/egui artifacts.
+[dependencies]
+decented-signet = { path = "../../TwangThang/crates/decented-signet" }
+flock-core = { path = "../crates/flock-core" }
+flock-session = { path = "../crates/flock-session" }
+flock-render = { path = "../crates/flock-render" }
+flock-audio = { path = "../crates/flock-audio" }
+# The daily run's seed: a verified Bitcoin block header, fetched on a background thread.
+flock-daily = { path = "../crates/flock-daily", features = ["fetch"] }
+# Identity (the device key) and the default relay list, for the My Signet account.
+decented-net = { package = "fray-net", path = "../../forgesworn/fray/crates/decented-net" }
+# The shared relay pool (health, address normalising) and the one-shot relay
+# reader in src/nostr_fetch.rs (the update check and More games). Versions and
+# features equal decented-net's, so the shared target dir reuses its artifacts.
+decented-relays = { package = "fray-relays", path = "../../forgesworn/fray/crates/decented-relays" }
+nostr = { version = "=0.44.8", features = ["nip44"] }
+glam = "0.29"
+# Native backends only (Vulkan everywhere it exists, GLES as the fallback).
+wgpu = { version = "29", default-features = false, features = ["std", "parking_lot", "wgsl", "vulkan", "gles"] }
+winit = "0.30"
+egui = "0.34"
+egui-wgpu = { version = "0.34", default-features = false, features = ["winit"] }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+log = "0.4"
+png = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# mpsc channels of the Bluetooth links (fray's VirtualLink is a tokio mpsc pair);
+# the rest is nostr_fetch.rs's own small runtime and timeouts.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
+tokio-tungstenite = { version = "0.26.2", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+# No clipboard backend: text goes through platform::os (xclip / wl-copy).
+egui-winit = { version = "0.34", default-features = false, features = ["x11", "wayland"] }
+env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+egui-winit = { version = "0.34", default-features = false, features = ["android-native-activity"] }
+winit = { version = "0.30", features = ["android-native-activity"] }
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.14"
+# JNI into the framework (intents, clipboard, Wi-Fi multicast lock, vibrator,
+# immersive mode).
+jni = "0.21"
+ndk-context = "0.1"
+
+[dev-dependencies]
+base64 = "0.22"

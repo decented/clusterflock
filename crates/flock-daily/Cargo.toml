@@ -1,0 +1,24 @@
+[package]
+name = "flock-daily"
+description = "Cluster Flock daily run: the seed comes from the first Bitcoin block of the UTC day, verified locally."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+# Blocking HTTPS fetch of the headers (mempool.space, cross-checked on
+# blockstream.info). Meant for a background thread.
+fetch = ["dep:ureq", "dep:serde_json"]
+
+[dependencies]
+sha2 = "0.10"
+serde_json = { version = "1", optional = true }
+# ureq 2.x speaks rustls 0.23 with the bundled webpki roots, the same TLS stack
+# as tokio-tungstenite in the app. No native-tls, no openssl.
+ureq = { version = "2.12", default-features = false, features = ["tls"], optional = true }
+
+[[example]]
+name = "today"
+required-features = ["fetch"]
