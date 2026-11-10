@@ -28,6 +28,15 @@ Signet crates are being moved to their own public repository; until then they
 are not bundled with this repository. `Cargo.lock` pins the external registry
 dependencies.
 
+Two ForgeSworn libraries come in as git dependencies pinned by revision in
+`app/Cargo.toml`, so cargo fetches them itself:
+[blockseed](https://github.com/forgesworn/blockseed) (the daily run's seed) and
+[nostr-release-kit](https://github.com/forgesworn/nostr-release-kit) (updates,
+More games and the release publisher). Building the APK also compiles the kit's
+Java, so `tools/build-apk.sh` needs a checkout of the kit at the pinned revision
+(`../forgesworn/nostr-release-kit` by default, or set `KIT`), and refuses any
+other revision.
+
 ## Desktop
 
 ```sh

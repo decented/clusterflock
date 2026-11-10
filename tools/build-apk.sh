@@ -89,6 +89,10 @@ for tool in javac; do command -v "$tool" >/dev/null || { echo "ERROR: $tool not 
 [ -f "$PLATFORM/android.jar" ] || { echo "ERROR: no android.jar in $PLATFORM" >&2; exit 1; }
 [ -d "$NDK" ] || { echo "ERROR: NDK not found (set ANDROID_NDK_HOME)" >&2; exit 1; }
 [ -d "$KIT/android/java/dev/forgesworn/release" ] || { echo "ERROR: nostr-release-kit not found at $KIT (set KIT)" >&2; exit 1; }
+# The kit's Java must come from the same revision as the Rust crate pinned in app/Cargo.toml.
+KIT_REV="$(grep -o 'nostr-release-kit", rev = "[0-9a-f]*' "$REPO/app/Cargo.toml" | head -1 | grep -o '[0-9a-f]*$')"
+KIT_HEAD="$(git -C "$KIT" rev-parse HEAD 2>/dev/null || true)"
+[ -n "$KIT_REV" ] && [ "$KIT_HEAD" = "$KIT_REV" ] || { echo "ERROR: $KIT is at ${KIT_HEAD:-?}, app/Cargo.toml pins nostr-release-kit $KIT_REV (git -C \"$KIT\" checkout $KIT_REV)" >&2; exit 1; }
 command -v cargo-ndk >/dev/null || { echo "ERROR: cargo-ndk missing (cargo install cargo-ndk)" >&2; exit 1; }
 case "$PROFILE" in release|debug) ;; *) echo "ERROR: PROFILE must be release or debug" >&2; exit 1 ;; esac
 case "$OUT" in "$REPO"|"$REPO"/*) echo "ERROR: OUT must be outside the repo (APKs are never committed)" >&2; exit 1 ;; esac

@@ -26,11 +26,11 @@ flock-render = { path = "../crates/flock-render" }
 flock-audio = { path = "../crates/flock-audio" }
 # The daily run's seed: a verified Bitcoin block header, fetched on a background thread.
 # Becomes a pinned git dependency once the repo is published.
-blockseed = { path = "../../forgesworn/blockseed", features = ["fetch"] }
+blockseed = { git = "https://github.com/forgesworn/blockseed", rev = "e0432bbbb329f8cbc964bc13aae7b0721d049b54", features = ["fetch"] }
 # The release half: the pinned-key release event, the Updater and the More games Catalog,
 # the Android installer, and the Java it calls (tools/build-apk.sh compiles that in).
 # Becomes a pinned git dependency once the repo is published.
-nostr-release-kit = { path = "../../forgesworn/nostr-release-kit" }
+nostr-release-kit = { git = "https://github.com/forgesworn/nostr-release-kit", rev = "47266c61f5e9401630fb1b2490055640a1861484" }
 # Identity (the device key) and the default relay list, for the My Signet account.
 decented-net = { package = "fray-net", path = "../../forgesworn/fray/crates/decented-net" }
 # The shared relay pool (health, address normalising) and the one-shot relay
@@ -60,14 +60,14 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 # Screenshots stage an offer with the kit's `testing` methods (`demo_offer` swaps the pinned release
 # key for a throwaway one): desktop only, never in the Android build.
-nostr-release-kit = { path = "../../forgesworn/nostr-release-kit", features = ["testing"] }
+nostr-release-kit = { git = "https://github.com/forgesworn/nostr-release-kit", rev = "47266c61f5e9401630fb1b2490055640a1861484", features = ["testing"] }
 # No clipboard backend: text goes through platform::os (xclip / wl-copy).
 egui-winit = { version = "0.34", default-features = false, features = ["x11", "wayland"] }
 env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # The kit's Android installer (JNI into dev.forgesworn.release.Updater).
-nostr-release-kit = { path = "../../forgesworn/nostr-release-kit", features = ["android"] }
+nostr-release-kit = { git = "https://github.com/forgesworn/nostr-release-kit", rev = "47266c61f5e9401630fb1b2490055640a1861484", features = ["android"] }
 egui-winit = { version = "0.34", default-features = false, features = ["android-native-activity"] }
 winit = { version = "0.30", features = ["android-native-activity"] }
 android-activity = { version = "0.6", features = ["native-activity"] }
