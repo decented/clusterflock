@@ -19,24 +19,25 @@ path = "src/main.rs"
 # workspaces that share a CARGO_TARGET_DIR with equal feature sets reuse the
 # compiled wgpu/winit/egui artifacts.
 [dependencies]
-decented-signet = { path = "../../TwangThang/crates/decented-signet" }
+# My Signet sign-in, online-play permission, the played-with book and invites (signet-play).
+# Every fray crate below must use the same git URL and rev that signet-play pins (4943413),
+# or cargo builds two copies and the types don't match.
+decented-signet = { git = "https://github.com/forgesworn/signet-play", rev = "7385b50b85c86616a2b1e0eb58cc3adf56ae71e3" }
 flock-core = { path = "../crates/flock-core" }
 flock-session = { path = "../crates/flock-session" }
 flock-render = { path = "../crates/flock-render" }
 flock-audio = { path = "../crates/flock-audio" }
 # The daily run's seed: a verified Bitcoin block header, fetched on a background thread.
-# Becomes a pinned git dependency once the repo is published.
 blockseed = { git = "https://github.com/forgesworn/blockseed", rev = "e0432bbbb329f8cbc964bc13aae7b0721d049b54", features = ["fetch"] }
 # The release half: the pinned-key release event, the Updater and the More games Catalog,
 # the Android installer, and the Java it calls (tools/build-apk.sh compiles that in).
-# Becomes a pinned git dependency once the repo is published.
 nostr-release-kit = { git = "https://github.com/forgesworn/nostr-release-kit", rev = "1c16b3e49433e635263b73e0efd600e8fbe647b3" }
 # Identity (the device key) and the default relay list, for the My Signet account.
-decented-net = { package = "fray-net", path = "../../forgesworn/fray/crates/decented-net" }
+decented-net = { package = "fray-net", git = "https://github.com/forgesworn/fray", rev = "4943413bb86a329c3ad9cc3180c02fd9186ef2ce" }
 # The shared relay pool (health, address normalising) and the one-shot relay
 # reader in src/nostr_fetch.rs (the update check and More games). Versions and
 # features equal decented-net's, so the shared target dir reuses its artifacts.
-decented-relays = { package = "fray-relays", path = "../../forgesworn/fray/crates/decented-relays" }
+decented-relays = { package = "fray-relays", git = "https://github.com/forgesworn/fray", rev = "4943413bb86a329c3ad9cc3180c02fd9186ef2ce" }
 nostr = { version = "=0.44.8", features = ["nip44"] }
 glam = "0.29"
 # Native backends only (Vulkan everywhere it exists, GLES as the fallback).

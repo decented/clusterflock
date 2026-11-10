@@ -895,6 +895,7 @@ checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 [[package]]
 name = "decented-invite"
 version = "0.8.19"
+source = "git+https://github.com/forgesworn/friend-link-kit?rev=91e9e2a53713805a8d50e59b3746815dbb0045d6#91e9e2a53713805a8d50e59b3746815dbb0045d6"
 dependencies = [
  "base64",
  "getrandom 0.3.4",
@@ -909,6 +910,7 @@ dependencies = [
 [[package]]
 name = "decented-signet"
 version = "0.8.19"
+source = "git+https://github.com/forgesworn/signet-play?rev=7385b50b85c86616a2b1e0eb58cc3adf56ae71e3#7385b50b85c86616a2b1e0eb58cc3adf56ae71e3"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1333,6 +1335,7 @@ dependencies = [
 [[package]]
 name = "fray-keep"
 version = "0.1.0"
+source = "git+https://github.com/forgesworn/fray?rev=4943413bb86a329c3ad9cc3180c02fd9186ef2ce#4943413bb86a329c3ad9cc3180c02fd9186ef2ce"
 dependencies = [
  "serde",
  "serde_json",
@@ -1341,6 +1344,7 @@ dependencies = [
 [[package]]
 name = "fray-net"
 version = "0.1.0"
+source = "git+https://github.com/forgesworn/fray?rev=4943413bb86a329c3ad9cc3180c02fd9186ef2ce#4943413bb86a329c3ad9cc3180c02fd9186ef2ce"
 dependencies = [
  "argon2",
  "bytes",
@@ -1368,6 +1372,7 @@ dependencies = [
 [[package]]
 name = "fray-relays"
 version = "0.1.0"
+source = "git+https://github.com/forgesworn/fray?rev=4943413bb86a329c3ad9cc3180c02fd9186ef2ce#4943413bb86a329c3ad9cc3180c02fd9186ef2ce"
 dependencies = [
  "log",
 ]
@@ -1375,6 +1380,7 @@ dependencies = [
 [[package]]
 name = "fray-session"
 version = "0.1.0"
+source = "git+https://github.com/forgesworn/fray?rev=4943413bb86a329c3ad9cc3180c02fd9186ef2ce#4943413bb86a329c3ad9cc3180c02fd9186ef2ce"
 dependencies = [
  "getrandom 0.3.4",
  "nostr",

@@ -20,19 +20,20 @@ App shell API: [docs/api/app-shell.md](docs/api/app-shell.md).
 
 ## Source dependencies
 
-The workspace uses sibling source checkouts as path dependencies. Before
-building, provide `../forgesworn/fray`
-(github.com/forgesworn/fray: the `fray-net` and `fray-relays` crates) and
-`../TwangThang` (the `decented-signet` crate and its path dependencies). The
-Signet crates are being moved to their own public repository; until then they
-are not bundled with this repository. `Cargo.lock` pins the external registry
-dependencies.
-
-Two ForgeSworn libraries come in as git dependencies pinned by revision in
-`app/Cargo.toml`, so cargo fetches them itself:
+The ForgeSworn libraries come in as git dependencies pinned by revision in
+`app/Cargo.toml` and `crates/flock-session/Cargo.toml`, so cargo fetches them
+itself:
+[signet-play](https://github.com/forgesworn/signet-play) (the `decented-signet`
+crate: My Signet sign-in, online-play permission, the played-with book and
+invites), [fray](https://github.com/forgesworn/fray) (`fray-net` and
+`fray-relays`: rooms, links and relays),
 [blockseed](https://github.com/forgesworn/blockseed) (the daily run's seed) and
 [nostr-release-kit](https://github.com/forgesworn/nostr-release-kit) (updates,
-More games and the release publisher). Building the APK also compiles the kit's
+More games and the release publisher). The fray crates are pinned to the same
+revision signet-play uses, so cargo builds one copy. `Cargo.lock` pins
+everything else.
+
+Building the APK also compiles the kit's
 Java, so `tools/build-apk.sh` needs a checkout of the kit at the pinned revision
 (`../forgesworn/nostr-release-kit` by default, or set `KIT`), and refuses any
 other revision.

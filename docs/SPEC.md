@@ -32,7 +32,8 @@ blockseed (external)  the daily run's Bitcoin-block seed: verification and fetch
 app                   package `gameflock`: shell, screens, platform, BLE, account (§13)
 ```
 
-Path deps exactly as Stampede: `../forgesworn/fray/...`, `../TwangThang/crates/decented-signet`.
+Git deps pinned by revision: `decented-signet` from forgesworn/signet-play, and `fray-net` and
+`fray-relays` from forgesworn/fray at the revision signet-play pins, so cargo builds one copy.
 
 ## 2. flock-core: coordinates, clock, ids
 
