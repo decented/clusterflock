@@ -19,7 +19,7 @@ the decisions taken for the Android build. Numbers are tunables (`Tuning`), not 
 | Updater | In-app updater pinned to the project's release key (see `README.md`, Releases). |
 | Prediction | Own runner predicted with `flock_core::predict_runner` and replay of unacked inputs (Stampede pattern); others interpolated with adaptive delay; contacts, damage and coins are host-only. Plus immediate cosmetic anticipation of the local command. |
 | Bots | Core ships runner bots and ghost bots. Used for: Flock Practice (you + up to 5 bots, offline), host-added bots in a lobby, and the debug congestion tests. Solo has none. |
-| Haptics | On by default; the player can switch them off in Settings. |
+| Haptics | On by default; the player can switch them off in Settings. Menu taps are touch feedback; game events (coins, landings, boosts, hits, the knock-out buzz) vibrate as media/game, so the system "Touch feedback" switch doesn't silence them. |
 
 ## 1. Workspace
 

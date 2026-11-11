@@ -40,6 +40,14 @@ impl Pulse {
         }
     }
 
+    /// Touch feedback (a menu button press) rather than a game event. Android files
+    /// touch feedback under the system "Touch feedback" switch, which many players turn
+    /// off; game events go out as media/game vibrations instead, so hits and coins still
+    /// buzz with that switch off. The Settings toggle gates both.
+    pub fn is_touch(self) -> bool {
+        matches!(self, Pulse::Tap)
+    }
+
     /// Strength 1..=255 (Android 8+ with amplitude control; else ignored).
     pub fn amplitude(self) -> u8 {
         match self {
@@ -55,15 +63,16 @@ impl Pulse {
 }
 
 pub trait Haptics {
-    /// Fire a one-shot vibration of `ms` at `amplitude`. Never blocks, never panics.
-    fn vibrate(&mut self, ms: u32, amplitude: u8);
+    /// Fire a one-shot vibration of `ms` at `amplitude`; `touch` marks touch feedback
+    /// (see [`Pulse::is_touch`]). Never blocks, never panics.
+    fn vibrate(&mut self, ms: u32, amplitude: u8, touch: bool);
     fn set_enabled(&mut self, on: bool);
     fn enabled(&self) -> bool;
 
     /// Fire the vibration for `p` (nothing when haptics are off).
     fn pulse(&mut self, p: Pulse) {
         if HAPTICS_ALLOWED && self.enabled() {
-            self.vibrate(p.millis(), p.amplitude());
+            self.vibrate(p.millis(), p.amplitude(), p.is_touch());
         }
     }
 }
@@ -73,12 +82,15 @@ pub trait Haptics {
 pub struct NoHaptics {
     pub on: bool,
     pub last_ms: Option<u32>,
+    /// Whether the last pulse was touch feedback.
+    pub last_touch: Option<bool>,
     pub count: u32,
 }
 
 impl Haptics for NoHaptics {
-    fn vibrate(&mut self, ms: u32, _amplitude: u8) {
+    fn vibrate(&mut self, ms: u32, _amplitude: u8, touch: bool) {
         self.last_ms = Some(ms);
+        self.last_touch = Some(touch);
         self.count += 1;
     }
     fn set_enabled(&mut self, on: bool) {
@@ -207,6 +219,20 @@ mod tests {
         assert_eq!(h.count, 1);
         assert!([Pulse::Tap, Pulse::Coin, Pulse::Landing, Pulse::Boost, Pulse::Hit, Pulse::Long].iter().all(|p| p.amplitude() <= Pulse::Bash.amplitude()));
         assert!(Pulse::Coin.amplitude() < Pulse::Landing.amplitude() && Pulse::Landing.amplitude() < Pulse::Boost.amplitude() && Pulse::Boost.amplitude() < Pulse::Hit.amplitude());
+    }
+
+    #[test]
+    fn only_menu_taps_are_touch_feedback() {
+        // Game events must not be filed as touch feedback: Android drops those when the
+        // system "Touch feedback" switch is off (seen on a Pixel 8 with 0.2.1).
+        let mut h = NoHaptics { on: true, ..Default::default() };
+        h.pulse(Pulse::Tap);
+        assert_eq!(h.last_touch, Some(true));
+        for p in [Pulse::Coin, Pulse::Landing, Pulse::Boost, Pulse::Hit, Pulse::Bash, Pulse::Long] {
+            assert!(!p.is_touch(), "{p:?}");
+            h.pulse(p);
+            assert_eq!(h.last_touch, Some(false), "{p:?}");
+        }
     }
 
     #[test]
