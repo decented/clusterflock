@@ -22,7 +22,7 @@ path = "src/main.rs"
 # My Signet sign-in, online-play permission, the played-with book and invites (signet-play).
 # Every fray crate below must use the same git URL and rev that signet-play pins (4943413),
 # or cargo builds two copies and the types don't match.
-decented-signet = { git = "https://github.com/forgesworn/signet-play", rev = "7385b50b85c86616a2b1e0eb58cc3adf56ae71e3" }
+decented-signet = { git = "https://github.com/forgesworn/signet-play", rev = "7594a05450e3224aa8fc464a6fd69f36a642d52f" }
 flock-core = { path = "../crates/flock-core" }
 flock-session = { path = "../crates/flock-session" }
 flock-render = { path = "../crates/flock-render" }

@@ -910,24 +910,23 @@ dependencies = [
 [[package]]
 name = "decented-signet"
 version = "0.8.19"
-source = "git+https://github.com/forgesworn/signet-play?rev=7385b50b85c86616a2b1e0eb58cc3adf56ae71e3#7385b50b85c86616a2b1e0eb58cc3adf56ae71e3"
+source = "git+https://github.com/forgesworn/signet-play?rev=7594a05450e3224aa8fc464a6fd69f36a642d52f#7594a05450e3224aa8fc464a6fd69f36a642d52f"
 dependencies = [
  "aes-gcm",
  "base64",
  "decented-invite",
+ "fray-relay-client",
  "fray-relays",
- "futures-util",
  "getrandom 0.3.4",
  "hex",
  "log",
  "nostr",
- "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "subtle",
+ "signet-contacts",
+ "signet-nip46-client",
  "tokio",
- "tokio-tungstenite",
 ]
 
 [[package]]
@@ -1169,7 +1168,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1365,6 +1364,21 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "socket2 0.5.10",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
+name = "fray-relay-client"
+version = "0.1.0"
+source = "git+https://github.com/forgesworn/fray-relay-client?rev=7b2243046a01814ad4ad8797ce563425dbcd9011#7b2243046a01814ad4ad8797ce563425dbcd9011"
+dependencies = [
+ "fray-relays",
+ "futures-util",
+ "log",
+ "nostr",
+ "rustls",
+ "serde_json",
  "tokio",
  "tokio-tungstenite",
 ]
@@ -2970,7 +2984,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.3",
  "rustls",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -3010,9 +3024,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.5",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3301,7 +3315,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3359,7 +3373,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3591,6 +3605,35 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "signet-contacts"
+version = "0.1.0"
+source = "git+https://github.com/forgesworn/signet-contacts-rs?rev=5ea15c7ee060321cac18fd89b4e6af30cdaa07a7#5ea15c7ee060321cac18fd89b4e6af30cdaa07a7"
+dependencies = [
+ "aes-gcm",
+ "base64",
+ "hex",
+ "nostr",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
+name = "signet-nip46-client"
+version = "0.2.0"
+source = "git+https://github.com/forgesworn/signet-nip46-client?rev=11b82efb05f916ec9ca15345c86f1d64ba2d5d13#11b82efb05f916ec9ca15345c86f1d64ba2d5d13"
+dependencies = [
+ "fray-relay-client",
+ "getrandom 0.3.4",
+ "hex",
+ "nostr",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tokio",
+]
 
 [[package]]
 name = "simd-adler32"
@@ -4541,7 +4584,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
