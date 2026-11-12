@@ -17,7 +17,7 @@ use std::path::Path;
 /// The `d` tag of this app's Android channel.
 pub const RELEASE_CHANNEL: &str = "gameflock-android-apk";
 /// Read for the release event; also what the publisher writes to (`tools/release/release.json`).
-pub const RELEASE_RELAYS: [&str; 3] = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
+pub const RELEASE_RELAYS: [&str; 3] = ["wss://relay.damus.io", "wss://relay.ditto.pub", "wss://relay.primal.net"];
 /// The release key's public half (hex), Cluster Flock's own (one release key per game),
 /// minted 2026-11-09 with the publisher's `--init-key`; the publisher refuses to sign
 /// with any other key. Rotating it means shipping a new APK by hand: there is no
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn the_shipped_constants_are_flocks_own() {
         assert_eq!(RELEASE_CHANNEL, "gameflock-android-apk");
-        assert_eq!(RELEASE_RELAYS, ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"]);
+        assert_eq!(RELEASE_RELAYS, ["wss://relay.damus.io", "wss://relay.ditto.pub", "wss://relay.primal.net"]);
         assert_eq!(OWN_PACKAGE, "org.decented.gameflock");
         assert_eq!(APP_NAME, "Cluster Flock");
         assert_eq!(RELEASE_PUBKEY_HEX, "01b0f270e290f5cd48aa537392de04e4b22124c16d696de96158395a60343b0f");
