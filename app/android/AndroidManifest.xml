@@ -98,6 +98,7 @@
     <queries>
         <package android:name="org.decented.twangthang" />
         <package android:name="org.decented.stampede" />
+        <package android:name="com.axenstax.game" />
     </queries>
 
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />

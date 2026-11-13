@@ -119,14 +119,15 @@ mod tests {
         assert_eq!(c.entries, CATALOG_ENTRIES.to_vec());
         assert_eq!(c.relays, RELEASE_RELAYS.map(String::from).to_vec());
         let cat = catalog();
-        assert_eq!(cat.entries().len(), 2);
+        assert_eq!(cat.entries().len(), 3);
         // Every entry names a real package that is not this app's own, and none repeats.
         assert_eq!(c.validate(OWN_PACKAGE), Ok(()));
         let filters = cat.filters();
-        assert_eq!(filters.len(), 2, "one filter per ready entry");
+        assert_eq!(filters.len(), 3, "one filter per ready entry");
         let json = filters.iter().map(|f| f.as_json()).collect::<Vec<_>>().join(" ");
         assert!(json.contains("2cc65a54774d9c1d6fde7e98255dbe1064940facb10dbc3e49f63300a27178c7"), "{json}");
         assert!(json.contains("30063") && json.contains("twangthang-android-apk") && json.contains("stampede-android-apk"), "{json}");
+        assert!(json.contains("axenstax-android-apk") && json.contains("ca43e7218d03a50e20b07f54fad58a7cf4ef9ac1a883e3a0104255a46600e502"), "{json}");
     }
 
     /// `tools/release/release.json` configures the kit's publisher; it and the Rust constants
