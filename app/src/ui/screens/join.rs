@@ -1,13 +1,17 @@
 //! Join by room code: six slots, an in-game keypad of the room-code letters
 //! (24, no I or O), Paste, and honest connecting stages. The same page is the
 //! "connecting" card for a Nearby or Bluetooth room that is already dialling.
-//! Porting note: Stampede's `join.rs` without Keeps; Bluetooth adds the
-//! "Waiting for the host to let you in…" stage.
+//! Also the page for a Keep (a home game server) joined by an invite link:
+//! a Keep the player has not played on is asked about first and nothing is
+//! sent until they say yes; a saved Keep joins at once. Porting note:
+//! Stampede's `join.rs`; Bluetooth adds the "Waiting for the host to let you
+//! in…" stage.
 
 use super::lobby::LobbyScreen;
 use super::online_common::{self, Door};
 use super::online_flow;
 use super::{common, Ctx, Screen, Transition};
+use crate::keeps::{self, JoinTarget};
 use crate::online;
 use crate::ui::art::{self, rgba};
 use crate::ui::icons::Icon;
@@ -32,7 +36,7 @@ pub const NO_CODE_ON_CLIPBOARD: &str = "No room code on the clipboard.";
 /// wrong version, or an unverified host.)
 pub fn is_transient(why: &str) -> bool {
     let base = online::friendly_failure(why);
-    ["Code not found", "Couldn't reach the internet meeting points", "Found the host but couldn't connect", "didn't answer over the link", "Network problem"]
+    [flock_session::net::INVITE_NO_ANSWER, "Code not found", "Couldn't reach the internet meeting points", "Found the host but couldn't connect", "didn't answer over the link", "Network problem"]
         .iter()
         .any(|m| base.contains(m))
 }
@@ -56,6 +60,16 @@ enum Stage {
     /// The session being joined is in the app's online slot.
     Connecting { age: f32 },
     Failed(String),
+    /// An invite for a Keep not in My Keeps: asked about before anything is dialled.
+    Confirm(Invite),
+}
+
+/// The Keep being joined: the two halves of an invite link. No `Debug`: the
+/// secret is the way in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Invite {
+    host_key: [u8; 32],
+    secret: [u8; 32],
 }
 
 pub struct JoinScreen {
@@ -68,7 +82,17 @@ pub struct JoinScreen {
     shake: f32,
     hint: Option<(String, f32)>,
     /// Join this on the first frame (a link opened the app).
-    auto: Option<String>,
+    auto: Option<JoinTarget>,
+    /// The Keep being joined, when this is an invite join (else a room code).
+    invite: Option<Invite>,
+    /// This join came from a My Keeps row: a retry dials the secret My Keeps holds then.
+    saved: bool,
+    /// This join's Keep has been saved to My Keeps (once per join, not once per frame).
+    recorded: bool,
+    /// Seconds the "Join a Keep?" card has been asking about its current Keep.
+    confirm_age: f32,
+    /// The failure on screen is of a Keep that is saved in My Keeps: offer Forget.
+    can_forget: bool,
     /// Attempt number (a join by code is retried while the host's relays come up).
     attempt: u32,
     /// Seconds since the first attempt of this join.
@@ -86,16 +110,29 @@ impl Default for JoinScreen {
 
 impl JoinScreen {
     pub fn new() -> JoinScreen {
-        JoinScreen { code: String::new(), stage: Stage::Entry, label: String::new(), door: Door::Online, t: 0.0, shake: 0.0, hint: None, auto: None, attempt: 0, total: 0.0, retry: true, staged: false }
+        JoinScreen { code: String::new(), stage: Stage::Entry, label: String::new(), door: Door::Online, t: 0.0, shake: 0.0, hint: None, auto: None, invite: None, saved: false, recorded: false, confirm_age: 0.0, can_forget: false, attempt: 0, total: 0.0, retry: true, staged: false }
     }
 
     /// Straight into joining (a `gameflock://join#CODE` link). A code that
     /// isn't one opens the keypad instead.
     pub fn with_code(code: &str) -> JoinScreen {
         match room::normalize_code(code) {
-            Some(c) => JoinScreen { auto: Some(c), ..JoinScreen::new() },
+            Some(c) => JoinScreen { auto: Some(JoinTarget::Code(c)), ..JoinScreen::new() },
             None => JoinScreen::new(),
         }
+    }
+
+    /// Straight into joining a room or a Keep (a launch link, a pasted invite).
+    pub fn with_target(target: JoinTarget) -> JoinScreen {
+        match target {
+            JoinTarget::Code(c) => JoinScreen::with_code(&c),
+            other => JoinScreen { auto: Some(other), ..JoinScreen::new() },
+        }
+    }
+
+    /// Straight into joining a Keep from My Keeps (its row's two halves).
+    pub fn rejoining(host_key: [u8; 32], secret: [u8; 32]) -> JoinScreen {
+        JoinScreen { saved: true, ..JoinScreen::with_target(JoinTarget::Invite { host_key, secret }) }
     }
 
     /// The connecting page for a session already in the app's slot (Nearby,
@@ -114,6 +151,16 @@ impl JoinScreen {
         JoinScreen { stage: Stage::Connecting { age: 3.0 }, label: "Bluetooth game \u{b7} room 1A2B".into(), door: Door::Bluetooth, retry: false, attempt: 1, staged: true, ..JoinScreen::new() }
     }
 
+    /// A failed attempt at a Keep (screenshots).
+    pub fn failed_keep_sample() -> JoinScreen {
+        JoinScreen { stage: Stage::Failed(keeps::UNREACHABLE.into()), can_forget: true, invite: Some(Invite { host_key: [0xab; 32], secret: [1; 32] }), ..JoinScreen::new() }
+    }
+
+    /// The question about a Keep the player has not played on (screenshots).
+    pub fn confirm_sample() -> JoinScreen {
+        JoinScreen { stage: Stage::Confirm(Invite { host_key: [0xab; 32], secret: [1; 32] }), staged: true, ..JoinScreen::new() }
+    }
+
     /// A failed attempt (screenshots).
     pub fn failed_sample() -> JoinScreen {
         JoinScreen { code: "KWTQPM".into(), stage: Stage::Failed("Code not found (check the code, or the host may have started).".into()), ..JoinScreen::new() }
@@ -130,7 +177,88 @@ impl JoinScreen {
         self.retry = true;
         self.door = Door::Online;
         self.code = code.to_string();
+        self.invite = None;
+        self.recorded = false;
+        self.can_forget = false;
         self.attempt_join(ctx, code);
+    }
+
+    /// Start joining a room or a Keep from scratch.
+    fn begin_target(&mut self, ctx: &mut Ctx, target: JoinTarget) {
+        match target {
+            // A room link says what it likes: only a real code is dialled.
+            JoinTarget::Code(code) => match room::normalize_code(&code) {
+                Some(code) => self.begin(ctx, &code),
+                None => {
+                    self.code.clear();
+                    self.invite = None;
+                    self.can_forget = false;
+                    self.stage = Stage::Entry;
+                }
+            },
+            JoinTarget::Invite { host_key, secret } => {
+                self.code.clear();
+                let invite = Invite { host_key, secret };
+                if keeps::contains(&keeps::load(ctx.data_dir), &fray_keep::hex_encode(&host_key)) {
+                    self.begin_invite(ctx, invite);
+                } else {
+                    // Someone else's Keep: nothing is sent, and the player's identity is not
+                    // shown to it, until the player says so.
+                    self.invite = None;
+                    self.can_forget = false;
+                    self.confirm_age = 0.0;
+                    self.stage = Stage::Confirm(invite);
+                }
+            }
+            JoinTarget::BadInvite => {
+                self.code.clear();
+                self.invite = None;
+                self.can_forget = false;
+                self.stage = Stage::Failed(keeps::NOT_AN_INVITE.into());
+            }
+        }
+    }
+
+    fn begin_invite(&mut self, ctx: &mut Ctx, invite: Invite) {
+        self.attempt = 0;
+        self.recorded = false;
+        self.total = 0.0;
+        self.retry = true;
+        self.door = Door::Online;
+        self.invite = Some(invite);
+        let host_hex = fray_keep::hex_encode(&invite.host_key);
+        self.label = keeps::load(ctx.data_dir).iter().find(|k| k.host_key == host_hex).map(|k| k.name.clone()).unwrap_or_else(|| keeps::display_name(None, &host_hex));
+        self.attempt_invite(ctx, invite);
+    }
+
+    /// `invite`, with the secret My Keeps holds now when this join came from a My Keeps row.
+    fn current_invite(&mut self, data_dir: &std::path::Path, invite: Invite) -> Invite {
+        if !self.saved {
+            return invite;
+        }
+        let host_hex = fray_keep::hex_encode(&invite.host_key);
+        match keeps::load(data_dir).iter().find(|k| k.host_key == host_hex).and_then(keeps::Keep::keys) {
+            Some((host_key, secret)) => {
+                let fresh = Invite { host_key, secret };
+                self.invite = Some(fresh);
+                fresh
+            }
+            None => invite,
+        }
+    }
+
+    fn attempt_invite(&mut self, ctx: &mut Ctx, invite: Invite) {
+        if super::account::gate(ctx).is_some() {
+            // Approval was withdrawn while here: nothing is dialled.
+            self.stage = Stage::Failed("My Signet approval is needed to play online.".into());
+            return;
+        }
+        let invite = self.current_invite(ctx.data_dir, invite);
+        self.attempt += 1;
+        match online_flow::open_join_invite(ctx, invite.host_key, invite.secret) {
+            Ok(()) => self.stage = Stage::Connecting { age: 0.0 },
+            Err(e) => self.stage = Stage::Failed(e),
+        }
     }
 
     fn attempt_join(&mut self, ctx: &mut Ctx, code: &str) {
@@ -152,9 +280,17 @@ impl JoinScreen {
         }
     }
 
-    fn fail(&mut self, why: String) {
+    fn fail(&mut self, ctx: &Ctx, why: String) {
         online::leave();
-        self.stage = Stage::Failed(why);
+        match self.invite {
+            Some(i) => {
+                // Forget only when the saved entry is the one just tried (a stray link must not
+                // offer to delete a working Keep).
+                self.can_forget = keeps::load(ctx.data_dir).iter().any(|k| k.keys() == Some((i.host_key, i.secret)));
+                self.stage = Stage::Failed(keeps::invite_failure_text(&why));
+            }
+            None => self.stage = Stage::Failed(why),
+        }
     }
 
     fn push_letter(&mut self, c: char) {
@@ -165,7 +301,8 @@ impl JoinScreen {
 }
 
 enum Step {
-    Seated,
+    /// In the lobby (or beyond); the host's own name, if the link proved one.
+    Seated(Option<String>),
     Dead(String),
     Waiting,
     Gone,
@@ -201,16 +338,22 @@ impl Screen for JoinScreen {
                 self.hint = None;
             }
         }
-        // A join link while here: join that room instead.
-        if let Some(c) = online_flow::take_join().and_then(|c| room::normalize_code(&c)) {
-            let same = self.code == c && matches!(self.stage, Stage::Connecting { .. });
+        // A join link while here: join that room (or Keep) instead.
+        if let Some(target) = online_flow::take_join() {
+            let connecting = matches!(self.stage, Stage::Connecting { .. });
+            let same = connecting
+                && match (&target, self.invite) {
+                    (JoinTarget::Code(c), None) => room::normalize_code(c).is_some_and(|c| self.code == c),
+                    (JoinTarget::Invite { host_key, secret }, Some(i)) => i.host_key == *host_key && i.secret == *secret,
+                    _ => false,
+                };
             if !same {
                 online::leave();
-                self.auto = Some(c);
+                self.auto = Some(target);
             }
         }
-        if let Some(code) = self.auto.take() {
-            self.begin(ctx, &code);
+        if let Some(target) = self.auto.take() {
+            self.begin_target(ctx, target);
         }
         if self.staged {
             return Transition::None;
@@ -251,33 +394,52 @@ impl Screen for JoinScreen {
                         _ => false,
                     };
                     if seated {
-                        Step::Seated
+                        Step::Seated(s.host_name())
                     } else {
                         Step::Waiting
                     }
                 })
                 .unwrap_or(Step::Gone);
                 match step {
-                    Step::Seated => return Transition::Replace(Box::new(LobbyScreen::new())),
+                    Step::Seated(host_name) => {
+                        // A Keep got us in: remember it for My Keeps. The screen keeps running
+                        // while it fades out, so this step comes round every frame: save once.
+                        if let (Some(i), false) = (self.invite, self.recorded) {
+                            self.recorded = true;
+                            match keeps::record_join(ctx.data_dir, &i.host_key, &i.secret, host_name.as_deref(), keeps::unix_now()) {
+                                Ok(true) => log::info!("join: saved {} in My Keeps", keeps::describe(&JoinTarget::Invite { host_key: i.host_key, secret: i.secret })),
+                                Ok(false) => {}
+                                Err(e) => log::warn!("join: could not save the Keep: {e}"),
+                            }
+                        }
+                        return Transition::Replace(Box::new(LobbyScreen::new()));
+                    }
                     Step::Dead(why) => {
                         log::info!("join: attempt {} failed after {:.0}s: {why}", self.attempt, self.total);
-                        if self.retry && self.code.chars().count() == CODE_LEN && is_transient(&why) && self.total < RETRY_BUDGET_SECS {
+                        let can_ask_again = self.invite.is_some() || self.code.chars().count() == CODE_LEN;
+                        if self.retry && can_ask_again && is_transient(&why) && self.total < RETRY_BUDGET_SECS {
                             // The host's relays may still be coming up (or our offer was lost): ask again.
                             online::leave();
-                            let c = self.code.clone();
-                            self.attempt_join(ctx, &c);
+                            match self.invite {
+                                Some(i) => self.attempt_invite(ctx, i),
+                                None => {
+                                    let c = self.code.clone();
+                                    self.attempt_join(ctx, &c);
+                                }
+                            }
                         } else {
-                            self.fail(why);
+                            self.fail(ctx, why);
                         }
                     }
                     Step::Gone => self.stage = Stage::Failed("The connection was cancelled.".into()),
                     Step::Waiting if age > GIVE_UP_SECS && self.door != Door::Bluetooth => {
                         log::info!("join: gave up after {age:.0}s");
-                        self.fail("That's taking too long. Check you are online and the host is still waiting, then try again.".into());
+                        self.fail(ctx, "That's taking too long. Check you are online and the host is still waiting, then try again.".into());
                     }
                     Step::Waiting => {}
                 }
             }
+            Stage::Confirm(_) => self.confirm_age += ctx.dt,
             Stage::Failed(_) => {}
         }
         Transition::None
@@ -302,7 +464,14 @@ impl Screen for JoinScreen {
         let mut out = Transition::None;
         let entry = matches!(self.stage, Stage::Entry);
         let mut typed: Vec<char> = Vec::new();
-        let (mut backspace, mut paste, mut go, mut retry, mut leave) = (false, false, false, false, false);
+        let (mut backspace, mut paste, mut go, mut retry, mut leave, mut forget) = (false, false, false, false, false, false);
+        let invite = self.invite.is_some();
+        let can_forget = self.can_forget;
+        let confirm = match &self.stage {
+            Stage::Confirm(i) => Some(*i),
+            _ => None,
+        };
+        let (mut confirm_yes, mut confirm_no) = (false, false);
         let code = self.code.clone();
         let shake = self.shake;
         let hint = self.hint.clone();
@@ -321,6 +490,8 @@ impl Screen for JoinScreen {
         };
         let progress = if waiting || door == Door::Bluetooth {
             "Stay close to the host and keep Bluetooth on.".to_string()
+        } else if self.attempt > 1 && invite {
+            format!("Still looking for the Keep\u{2026} (try {})", self.attempt)
         } else if self.attempt > 1 {
             format!("Still looking\u{2026} the host may still be getting ready (try {})", self.attempt)
         } else {
@@ -414,8 +585,8 @@ impl Screen for JoinScreen {
                 p.text(pos2(card.center().x, card.top() + 38.0), Align2::CENTER_CENTER, "Couldn't join", theme::title(26.0), Color32::from_rgb(0xFF, 0x8A, 0x7A));
                 let g = p.layout(msg.clone(), theme::ui_medium(14.5), theme::TEXT, card.width() - 56.0);
                 p.galley(pos2(card.left() + 28.0, card.top() + 66.0), g, theme::TEXT);
-                let can_retry = code.chars().count() == CODE_LEN && self.retry;
-                let buttons = 1 + usize::from(can_retry);
+                let can_retry = (code.chars().count() == CODE_LEN && self.retry) || invite;
+                let buttons = 1 + usize::from(can_forget) + usize::from(can_retry);
                 let bw = (card.width() - 56.0 - S3 * (buttons as f32 - 1.0)) / buttons as f32;
                 let by = card.bottom() - 22.0 - 46.0;
                 let mut bx = card.left() + 28.0;
@@ -423,9 +594,17 @@ impl Screen for JoinScreen {
                     leave = true;
                 }
                 bx += bw + S3;
+                if can_forget {
+                    if widgets::button(ui, Rect::from_min_size(pos2(bx, by), vec2(bw, 46.0)), "join-forget", &Btn::new("Forget")).clicked() {
+                        forget = true;
+                    }
+                    bx += bw + S3;
+                }
                 if can_retry && widgets::button(ui, Rect::from_min_size(pos2(bx, by), vec2(bw, 46.0)), "join-retry", &Btn::primary("Try again")).clicked() {
                     retry = true;
                 }
+            } else if confirm.is_some() {
+                // the question is drawn over the page, below
             } else {
                 // connecting
                 let card = Rect::from_center_size(body.center() - vec2(0.0, 40.0), vec2(body.width().min(520.0), 262.0));
@@ -450,7 +629,26 @@ impl Screen for JoinScreen {
                 }
             }
         });
+        if let Some(i) = confirm {
+            match common::keep_confirm_prompt(ui, ctx.viewport.screen, &fray_keep::hex_encode(&i.host_key)) {
+                Some(true) => confirm_yes = true,
+                Some(false) => confirm_no = true,
+                None => {}
+            }
+        }
         // apply
+        // A second link may have swapped the card in this very frame: a tap that landed on
+        // the old one must not answer the new one.
+        if confirm_yes && self.confirm_age >= common::CONFIRM_GUARD_SECS && !self.staged {
+            if let Some(i) = confirm {
+                feedback::select(ctx);
+                self.begin_invite(ctx, i);
+            }
+        }
+        if confirm_no {
+            feedback::back(ctx);
+            return Transition::Pop;
+        }
         for c in typed {
             feedback::tap(ctx);
             self.push_letter(c);
@@ -476,8 +674,24 @@ impl Screen for JoinScreen {
         }
         if retry {
             feedback::select(ctx);
-            let c = self.code.clone();
-            self.begin(ctx, &c);
+            if let Some(i) = self.invite {
+                self.begin_invite(ctx, i);
+            } else {
+                let c = self.code.clone();
+                self.begin(ctx, &c);
+            }
+        }
+        if forget {
+            feedback::select(ctx);
+            if let Some(i) = self.invite {
+                let host_hex = fray_keep::hex_encode(&i.host_key);
+                match keeps::forget_saved(ctx.data_dir, &host_hex) {
+                    Ok(()) => ctx.say(format!("Forgot {}.", self.label)),
+                    Err(e) => ctx.say(format!("Couldn't forget that Keep: {e}")),
+                }
+            }
+            self.can_forget = false;
+            return Transition::Pop;
         }
         if leave {
             out = self.back(ctx);

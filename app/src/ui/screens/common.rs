@@ -127,3 +127,16 @@ pub fn drift_flock(p: &egui::Painter, rect: Rect, t: f32, alpha: f32) {
         p.add(Shape::line(vec![c + vec2(-wing.x, wing.y), c, c + wing], Stroke::new(1.6_f32, col)));
     }
 }
+
+/// Card height of the unseen-Keep question.
+pub const KEEP_CONFIRM_H: f32 = 250.0;
+
+/// How long a "Join a Keep?" card ignores its Join button after the Keep it names changed.
+pub const CONFIRM_GUARD_SECS: f32 = 0.5;
+
+/// "Join a Keep?": an invite for a Keep that is not in My Keeps. Never shows
+/// the secret. `Some(true)` = Join, `Some(false)` = Not now.
+pub fn keep_confirm_prompt(ui: &egui::Context, screen: Rect, host_hex: &str) -> Option<bool> {
+    let msg = format!("Someone sent you an invite to a Keep you haven't played on. Keep ID: {}. Only join if you trust the person who sent it.", crate::keeps::keep_id(host_hex));
+    prompt(ui, screen, "keep-confirm", KEEP_CONFIRM_H, "Join a Keep?", &msg, "Not now", "Join")
+}

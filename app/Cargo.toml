@@ -39,6 +39,9 @@ decented-net = { package = "fray-net", git = "https://github.com/forgesworn/fray
 # reader in src/nostr_fetch.rs (the update check and More games). Versions and
 # features equal decented-net's, so the shared target dir reuses its artifacts.
 decented-relays = { package = "fray-relays", git = "https://github.com/forgesworn/fray", rev = "1350014f3c95f5c48cb6290f4f9cddc97fa318c6" }
+# The saved-Keeps list (keeps.json), the invite link text and the rule for believing a pass: a
+# Keep is a home game server a player joins by invite link. Same revision as the crates above.
+fray-keep = { git = "https://github.com/forgesworn/fray", rev = "1350014f3c95f5c48cb6290f4f9cddc97fa318c6" }
 nostr = { version = "=0.44.8", features = ["nip44"] }
 glam = "0.29"
 # Native backends only (Vulkan everywhere it exists, GLES as the fallback).

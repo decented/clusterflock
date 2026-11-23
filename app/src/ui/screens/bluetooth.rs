@@ -106,9 +106,9 @@ impl Screen for BluetoothScreen {
 
     fn update(&mut self, ctx: &mut Ctx) -> Transition {
         common::begin(ctx, &mut self.t);
-        if let Some(code) = super::online_flow::take_join() {
+        if let Some(target) = super::online_flow::take_join() {
             self.stop_scan();
-            return Transition::Replace(Box::new(JoinScreen::with_code(&code)));
+            return Transition::Replace(Box::new(JoinScreen::with_target(target)));
         }
         if let Some(s) = &self.staged {
             self.state = s.state;

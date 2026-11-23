@@ -4,8 +4,8 @@
 //! account upkeep do. The engine drives the session every frame and from the
 //! background tick when no screen did ([`pump_auto`], [`end_frame`]).
 //!
-//! Forked from Stampede's `app/src/online` (no host migration, no Keeps,
-//! no custom tracks), plus Twang Thang's Bluetooth door: a hosting session
+//! Forked from Stampede's `app/src/online` (no host migration, no custom tracks;
+//! a Keep is joined by invite, see [`OnlineSession::join_invite`]), plus Twang Thang's Bluetooth door: a hosting session
 //! can open a Bluetooth door into the same room ([`OnlineSession::start_bluetooth`]),
 //! whose joiners wait for the host's Accept. See `docs/api/flock-session.md`.
 //!
@@ -30,6 +30,8 @@ use crate::platform::ble::{self, Ble, BleAdvert, BleSeen, BleState};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_keeps;
 
 /// Tests that put a session in the process-wide slot, or run an `Engine` frame while one may be
 /// there (the engine leaves the slot's room when approval ends), take this lock.
@@ -223,6 +225,9 @@ pub enum JoinedBy {
     Code,
     Nearby,
     Bluetooth,
+    /// A Keep (a home game server), by an invite link or a saved Keep. The
+    /// room has no host player: the phone is never the authority.
+    Keep,
     /// No network (tests, screenshots).
     Offline,
 }
@@ -330,6 +335,23 @@ impl OnlineSession {
         log::info!("online: joining room {code}");
         let link = net::join_code(&net, &id, code);
         Ok(Self::network_client(link, name, colour, JoinedBy::Code))
+    }
+
+    /// Join a Keep by invite (online, through the relays): the two halves of an
+    /// invite link. Only a host whose key is `host_key` is joined. The Keep's
+    /// room has no host player, so this phone is a guest like any other: it is
+    /// never the authority.
+    pub fn join_invite(data_dir: &Path, host_key: [u8; 32], secret: [u8; 32], name: &str, colour: u8) -> Result<OnlineSession, String> {
+        let net = net_config(data_dir);
+        let id = identity(&net)?;
+        log::info!("online: joining {}", crate::keeps::describe(&crate::keeps::JoinTarget::Invite { host_key, secret }));
+        let link = net::join_invite(&net, &id, &secret, host_key);
+        Ok(Self::keep_client(link, name, colour))
+    }
+
+    /// A session on a Keep's invite link `link`.
+    pub(crate) fn keep_client(link: QuicClient, name: &str, colour: u8) -> OnlineSession {
+        Self::network_client(link, name, colour, JoinedBy::Keep)
     }
 
     /// Join a room heard on the LAN ([`browse_nearby`]).
@@ -557,6 +579,20 @@ impl OnlineSession {
     pub fn host_persona(&self) -> Option<&str> {
         self.me.host_persona()
     }
+    /// The name the host's link proved (a Keep's room name), as the player may
+    /// see it: plain text, short.
+    pub fn host_name(&self) -> Option<String> {
+        self.me.host_identity().map(|h| plain_name(&h.name))
+    }
+    /// Keep passes the host sent since the last call, each with the host's
+    /// proven name when the link proved one. A Keep sends one after admitting a
+    /// player (by invite, or by room code or on the local network); the session
+    /// believes only a pass naming the host key its link proved
+    /// (`fray_keep::accept_pass`), and the engine saves it to My Keeps.
+    pub fn take_keep_passes(&mut self) -> Vec<(flock_session::KeepPass, Option<String>)> {
+        let name = self.me.host_identity().map(|h| h.name.clone());
+        self.me.take_keep_passes().into_iter().map(|p| (p, name.clone())).collect()
+    }
     /// "<name> left" notices (shown ~4 s).
     pub fn notice(&self) -> Option<String> {
         self.me.notice()
@@ -590,6 +626,10 @@ impl OnlineSession {
     pub fn dead_reason(&self) -> Option<String> {
         if matches!(self.me.phase(), ClientPhase::Disconnected(_)) && self.away_explains_loss() {
             return Some(AWAY_TEXT.into());
+        }
+        // A Keep removes a player when their invite is revoked; say so plainly.
+        if self.by == JoinedBy::Keep && matches!(self.me.phase(), ClientPhase::Closed(why) if why == "kicked") {
+            return Some(KEEP_REMOVED_TEXT.into());
         }
         dead_text(self.me.phase())
     }
@@ -764,6 +804,14 @@ pub fn dead_text(phase: &ClientPhase) -> Option<String> {
         ClientPhase::Disconnected(_) => "Lost the connection to the host.".into(),
         _ => return None,
     })
+}
+
+/// What a player removed from a Keep (their invite revoked) is told.
+pub const KEEP_REMOVED_TEXT: &str = "You were removed from this Keep.";
+
+/// A name the host chose (a Keep may be a stranger's), as plain short text.
+pub fn plain_name(name: &str) -> String {
+    name.chars().filter(|c| !c.is_control() && !crate::keeps::is_invisible(*c)).take(60).collect()
 }
 
 /// Strip the transport's " [Stage]" suffix from a failure text.

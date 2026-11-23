@@ -105,9 +105,9 @@ impl Screen for NearbyScreen {
             self.rooms = rooms;
         }
         // A join link while here: that room instead.
-        if let Some(code) = online_flow::take_join() {
+        if let Some(target) = online_flow::take_join() {
             self.stop(ctx);
-            return Transition::Replace(Box::new(JoinScreen::with_code(&code)));
+            return Transition::Replace(Box::new(JoinScreen::with_target(target)));
         }
         Transition::None
     }

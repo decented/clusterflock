@@ -8,6 +8,7 @@ pub mod common;
 pub mod games;
 pub mod home;
 pub mod join;
+pub mod keeps;
 pub mod lobby;
 pub mod multiplayer;
 pub mod nearby;
@@ -174,6 +175,9 @@ pub const SCREENS: &[(&str, fn() -> Box<dyn Screen>)] = &[
     ("join_keypad", || Box::new(join::JoinScreen::sample())),
     ("join_waiting", || Box::new(join::JoinScreen::waiting_sample())),
     ("join_failed", || Box::new(join::JoinScreen::failed_sample())),
+    ("join_keep_failed_sample", || Box::new(join::JoinScreen::failed_keep_sample())),
+    ("join_keep_confirm_sample", || Box::new(join::JoinScreen::confirm_sample())),
+    ("my_keeps_sample", || Box::new(keeps::KeepsScreen::sample())),
     ("nearby_list", || Box::new(nearby::NearbyScreen::sample())),
     ("nearby_empty", || Box::new(nearby::NearbyScreen::empty_sample())),
     ("bluetooth_scan", || Box::new(bluetooth::BluetoothScreen::scan_sample())),
@@ -181,6 +185,7 @@ pub const SCREENS: &[(&str, fn() -> Box<dyn Screen>)] = &[
     ("bluetooth_permission", || Box::new(bluetooth::BluetoothScreen::permission_sample())),
     ("lobby_host", || Box::new(lobby::LobbyScreen::host_sample())),
     ("lobby_guest", || Box::new(lobby::LobbyScreen::guest_sample())),
+    ("lobby_keep_sample", || Box::new(lobby::LobbyScreen::keep_sample())),
     ("lobby_waiting", || Box::new(lobby::LobbyScreen::waiting_sample())),
     ("practice", || Box::new(practice::PracticeScreen::new())),
     ("solo_over", || Box::new(solo_over::SoloOverScreen::sample())),
