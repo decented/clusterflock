@@ -450,7 +450,9 @@ impl HostAuthority {
     /// Remove the human seated on `peer` without a ban (a Keep whose invite
     /// was cancelled: a new invite lets them back). They are told
     /// `Closed("kicked")` before the link drops. `false`: nobody is seated on
-    /// `peer`, or it is the host's own seat.
+    /// `peer`, or it is the host's own seat. A peer admitted by the transport
+    /// whose `Hello` has not been seated yet is not removed (`false`): a Keep
+    /// also drops the link itself (`HostTransport::disconnect`) for such a peer.
     pub fn remove_peer(&mut self, peer: PeerKey) -> bool {
         self.remove_peer_with_reason(peer, "kicked")
     }

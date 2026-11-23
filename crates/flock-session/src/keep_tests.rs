@@ -343,10 +343,21 @@ fn a_keep_removes_a_player_politely_without_a_ban_and_hands_them_a_pass() {
     });
     assert_eq!(got, vec![pass]);
     assert!(b.take_keep_passes().is_empty(), "the other player gets none");
-    // A pass naming another Keep is not believed.
+    // A pass naming another Keep is not believed: a good pass sent right
+    // after it is the only one that arrives, so the bad one was delivered
+    // (messages are in order) and dropped, not lost.
     assert!(rig.host.send_keep_pass(rig.peer_of(&b), KeepPass { host_key: [7; 32], secret }));
-    rig.run_until(&mut [&mut a, &mut b], 2, |_, _| false);
-    assert!(b.take_keep_passes().is_empty(), "a host may only hand out a way back into itself");
+    let good = KeepPass { host_key: rig.keep_key(), secret: [9; 32] };
+    assert!(rig.host.send_keep_pass(rig.peer_of(&b), good.clone()));
+    let mut got_b = Vec::new();
+    assert!(
+        rig.run_until(&mut [&mut a, &mut b], 20, |_, c| {
+            got_b.extend(c[1].take_keep_passes());
+            !got_b.is_empty()
+        }),
+        "the good pass never arrived"
+    );
+    assert_eq!(got_b, vec![good], "a host may only hand out a way back into itself");
     // Remove Ada: told why, seat freed, Bob untouched.
     assert!(rig.host.remove_peer_with_reason(rig.peer_of(&a), "The Keep removed you: your invite was cancelled."));
     assert!(rig.run_until(&mut [&mut a, &mut b], 20, |_, c| dead(c[0])));
@@ -360,6 +371,91 @@ fn a_keep_removes_a_player_politely_without_a_ban_and_hands_them_a_pass() {
     let mut again = rig.join_invite(&id, &secret, "Ada");
     assert!(rig.run_until(&mut [&mut b, &mut again], 20, |_, c| in_lobby(c[1])), "{:?}", again.phase());
     assert_eq!(rig.host.human_count(), 2);
+}
+
+#[test]
+fn a_pass_on_a_join_by_code_is_dropped_even_when_it_names_the_host() {
+    let mut rig = Rig::new(None, 1);
+    let (secret, _) = rig.invite(1);
+    let mut by_code = rig.join_code(&approved().0, "Code");
+    let mut by_invite = rig.join_invite(&approved().0, &secret, "Invite");
+    assert!(rig.run_until(&mut [&mut by_code, &mut by_invite], 30, |_, c| in_lobby(c[0]) && in_lobby(c[1])));
+    // The same pass, for the very host each reached, to a room-code joiner and
+    // then to an invite joiner: only the invite joiner keeps it.
+    let pass = KeepPass { host_key: rig.keep_key(), secret };
+    assert!(rig.host.send_keep_pass(rig.peer_of(&by_code), pass.clone()));
+    assert!(rig.host.send_keep_pass(rig.peer_of(&by_invite), pass.clone()));
+    let mut got = Vec::new();
+    assert!(rig.run_until(&mut [&mut by_code, &mut by_invite], 20, |_, c| {
+        got.extend(c[1].take_keep_passes());
+        !got.is_empty()
+    }));
+    // The code joiner had the same time to receive its pass and did not keep it.
+    rig.run_until(&mut [&mut by_code, &mut by_invite], 2, |_, _| false);
+    assert_eq!(got, vec![pass]);
+    assert!(by_code.take_keep_passes().is_empty(), "no Keep key was proved on a join by code");
+}
+
+/// A pass is believed only when the transport proved this very Keep key: a
+/// fake link, no network, so the "no key known" cases can be reached.
+mod pass_rule {
+    use std::collections::VecDeque;
+
+    use super::*;
+    use crate::client::ClientSession;
+    use crate::transport::{ClientNetEvent, ClientTransport, HostIdentity};
+
+    struct Fake {
+        inq: Arc<Mutex<VecDeque<ClientNetEvent>>>,
+        proved: Option<[u8; 32]>,
+    }
+    impl ClientTransport for Fake {
+        fn poll(&mut self) -> Option<ClientNetEvent> {
+            self.inq.lock().unwrap().pop_front()
+        }
+        fn send_reliable(&mut self, _: Vec<u8>) {}
+        fn send_lossy(&mut self, _: Vec<u8>) {}
+        fn rtt_ms(&self) -> Option<u32> {
+            None
+        }
+        fn close(&mut self) {}
+        fn proved_keep_key(&self) -> Option<[u8; 32]> {
+            self.proved
+        }
+    }
+
+    fn hex(k: &[u8; 32]) -> String {
+        k.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Deliver `pass` on a link that reports `host` as connected and `proved`
+    /// as the invite's key; what the client kept.
+    fn kept(host: Option<[u8; 32]>, proved: Option<[u8; 32]>, pass: &KeepPass) -> Vec<KeepPass> {
+        let q = Arc::new(Mutex::new(VecDeque::new()));
+        let host = host.map(|k| HostIdentity { name: "h".into(), pubkey: hex(&k), npub: "npub1x".into(), persona: None });
+        q.lock().unwrap().push_back(ClientNetEvent::Connected { host });
+        q.lock().unwrap().push_back(ClientNetEvent::Reliable(proto::encode(&ToClient::KeepPass(pass.clone()))));
+        let mut c = ClientSession::new(Box::new(Fake { inq: q, proved }), "Joiner", 0);
+        c.update(0, InputFrame::default());
+        c.take_keep_passes()
+    }
+
+    #[test]
+    fn a_pass_is_kept_only_for_the_key_the_invite_proved() {
+        let key = [0x11; 32];
+        let pass = KeepPass { host_key: key, secret: [2; 32] };
+        // Proved key, host reached and pass all agree: kept.
+        assert_eq!(kept(Some(key), Some(key), &pass), vec![pass.clone()]);
+        // No host key known at all (a loopback link): dropped, not stored.
+        assert!(kept(None, None, &pass).is_empty());
+        assert!(kept(None, Some(key), &pass).is_empty());
+        // A host is known but nothing was proved by an invite: dropped.
+        assert!(kept(Some(key), None, &pass).is_empty());
+        // The pass names another Keep than the proved one: dropped.
+        assert!(kept(Some(key), Some([0x22; 32]), &pass).is_empty());
+        // The invite's Keep and the pass agree but the host reached differs: dropped.
+        assert!(kept(Some([0x33; 32]), Some(key), &pass).is_empty());
+    }
 }
 
 /// The `ToClient` variants a client built before `KeepPass` knew (the first

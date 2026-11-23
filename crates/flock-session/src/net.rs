@@ -104,7 +104,7 @@ pub fn join_nearby(cfg: &NetConfig, id: &Identity, room: &LanRoom) -> QuicClient
 /// is joined. A failure is worded for a Keep, not a room code: see
 /// [`join_failure_text_for`].
 pub fn join_invite(cfg: &NetConfig, id: &Identity, secret: &[u8; 32], host_key: [u8; 32]) -> QuicClient {
-    QuicClient { invite: true, ..QuicClient::new(decented_net::join_invite(cfg, id, secret, host_key)) }
+    QuicClient { invite_key: Some(host_key), ..QuicClient::new(decented_net::join_invite(cfg, id, secret, host_key)) }
 }
 
 /// [`join_invite`] over a caller-supplied relay (tests, with Fray's
@@ -117,7 +117,7 @@ pub fn join_invite_with_relay(
     relay: Box<dyn decented_net::relay::RendezvousRelay>,
 ) -> QuicClient {
     QuicClient {
-        invite: true,
+        invite_key: Some(host_key),
         ..QuicClient::new(decented_net::join_invite_with_relay(cfg, id, secret, host_key, relay))
     }
 }
@@ -170,6 +170,11 @@ pub struct JoinInfo {
 /// (`Err` carries why, for logs). A refused peer is disconnected (not banned:
 /// it may come back with a valid invite) and never reaches the host as
 /// `Joined`. A host with no gate (the phone app) admits as before.
+///
+/// The gate runs inside [`QuicHost::poll`], under the transport's lock: it
+/// must decide quickly, must not block (disk, network, a lock also taken while
+/// that lock is held) and must not call back into the transport (for example
+/// `HostLink::with_lan`, `peers_admitted_by`), which would deadlock.
 pub type AdmissionGate = Box<dyn FnMut(&JoinInfo) -> Result<(), String> + Send>;
 
 /// A hosted room as a [`HostTransport`]. Room-level events (`Ready`,
@@ -201,7 +206,10 @@ impl QuicHost {
     }
 
     /// Put a gate in front of admission (see [`AdmissionGate`]). The Keep uses
-    /// it to apply its invite rules; the phone app does not set one.
+    /// it to apply its invite rules; the phone app does not set one. Set it
+    /// before the first `poll`: peers already admitted are not asked again. It
+    /// gates this listener only (a Bluetooth door is a separate `QuicHost`
+    /// with its own gate), and the peer keys it sees are this listener's own.
     pub fn set_admission_gate(&mut self, gate: AdmissionGate) {
         self.gate = Some(gate);
     }
@@ -395,8 +403,10 @@ pub struct QuicClient {
     host_key: Option<nostr::PublicKey>,
     /// Bluetooth: the host's attestation is still to be verified.
     deferred: bool,
-    /// Joined by invite, so a failure is worded for a Keep, not a code.
-    invite: bool,
+    /// Joined by invite: the Keep's key the link named (Fray pins the host to
+    /// it before the hello). A failure is worded for a Keep, not a code, and
+    /// a Keep pass is believed only for this key.
+    invite_key: Option<[u8; 32]>,
 }
 
 impl QuicClient {
@@ -408,7 +418,7 @@ impl QuicClient {
             failed: None,
             host_key: None,
             deferred: false,
-            invite: false,
+            invite_key: None,
         }
     }
 
@@ -439,6 +449,9 @@ fn stage_text(stage: JoinStage) -> &'static str {
 }
 
 impl ClientTransport for QuicClient {
+    fn proved_keep_key(&self) -> Option<[u8; 32]> {
+        self.invite_key
+    }
     fn poll(&mut self) -> Option<ClientNetEvent> {
         let h = self.handle.as_ref()?;
         if self.allowed_until.is_some_and(|until| until <= unix_now()) {
@@ -486,7 +499,7 @@ impl ClientTransport for QuicClient {
             }
             ClientEvent::Failed { stage, reason } => {
                 log::info!("[net] join failed at {stage:?}: {reason:?}");
-                let text = join_failure_text_for(&reason, stage, self.invite);
+                let text = join_failure_text_for(&reason, stage, self.invite_key.is_some());
                 self.failed = Some((stage, reason));
                 ClientNetEvent::Failed(text)
             }

@@ -393,9 +393,10 @@ impl ClientSession {
         }
         self.lobby.as_ref()
     }
-    /// Keep passes the host sent since the last call, in arrival order, each
-    /// for the very host this link proved. Only a Keep sends one; the app
-    /// saves the Keep from it. Taken once.
+    /// Keep passes the host sent since the last call, in arrival order. A pass
+    /// is kept only when the join was by a Keep's invite link and the pass names
+    /// that very Keep (the key the link proved); every pass on any other join
+    /// is dropped. The app saves the Keep from it. Taken once.
     pub fn take_keep_passes(&mut self) -> Vec<KeepPass> {
         std::mem::take(&mut self.keep_passes)
     }
@@ -692,15 +693,17 @@ impl ClientSession {
                 }
             }
             ToClient::KeepPass(pass) => {
-                // A host may only hand out a way back into itself: otherwise
-                // any room could fill the app's saved Keeps with Keeps it does
-                // not run.
-                let proven = self.host.as_ref().map(|h| {
-                    let key: String = pass.host_key.iter().map(|byte| format!("{byte:02x}")).collect();
-                    h.pubkey.eq_ignore_ascii_case(&key)
-                });
-                if proven == Some(false) {
-                    log::warn!("[client] a keep pass for another host was ignored");
+                // A pass is believed only for the Keep this very join proved:
+                // a join by a Keep's invite link, to the host key that link
+                // names. With no proved key (a room code, Nearby, Bluetooth,
+                // an in-process link) nothing matches and the pass is dropped,
+                // as in `fray_keep::accept_pass`. Otherwise any room could fill
+                // the app's saved Keeps with Keeps it does not run.
+                let key: String = pass.host_key.iter().map(|byte| format!("{byte:02x}")).collect();
+                let proved = self.transport.proved_keep_key() == Some(pass.host_key)
+                    && self.host.as_ref().is_some_and(|h| h.pubkey.eq_ignore_ascii_case(&key));
+                if !proved {
+                    log::warn!("[client] a keep pass not for the Keep this join reached was ignored");
                 } else if self.keep_passes.len() < MAX_KEEP_PASSES && !self.keep_passes.contains(&pass) {
                     self.keep_passes.push(pass);
                 }

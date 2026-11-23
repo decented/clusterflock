@@ -328,7 +328,8 @@ finite.
 
 Background: Stampede's multiplayer notes and Twang Thang's Bluetooth notes. **Fork Stampede's `race-session`**; keep its
 class-(a) files near verbatim, rewrite class (c). Do not port: migration (all of it),
-Keep invites, track transfer, `authority.rs`, `checkpoint.rs`, race-authority.
+track transfer, `authority.rs`, `checkpoint.rs`, race-authority. Keep invites are ported (the
+host-side admission gate and the client's invite join, below).
 
 - `APP_TAG = "gameflock"` (= `account::APP_ID`; namespaces room codes, ALPN, LAN beacon,
   attestation `d` tag). `PROTO_VERSION = 3` (0.2: `Hello`/`SeatView` carry `hat`,
@@ -383,7 +384,8 @@ Keep invites, track transfer, `authority.rs`, `checkpoint.rs`, race-authority.
 - A Keep (a home game server) hosts a room as a dedicated host (no player seat) behind an
   admission gate on the QUIC host, asked after the persona check; with no gate the host
   admits as before. A Keep's return pass is an appended `ToClient` variant (index 13) only a
-  Keep host sends; it changes no existing message and needs no `PROTO_VERSION` bump.
+  Keep host sends; it changes no existing message and needs no `PROTO_VERSION` bump. A client keeps a
+  pass only on a join by invite link, and only for the Keep key that link proved; on any other join it drops every pass.
 
 ## 11. flock-render
 
