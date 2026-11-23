@@ -916,7 +916,7 @@ dependencies = [
  "base64",
  "decented-invite",
  "fray-relay-client",
- "fray-relays",
+ "fray-relays 0.1.0 (git+https://github.com/forgesworn/fray?rev=4943413bb86a329c3ad9cc3180c02fd9186ef2ce)",
  "getrandom 0.3.4",
  "hex",
  "log",
@@ -1334,7 +1334,7 @@ dependencies = [
 [[package]]
 name = "fray-keep"
 version = "0.1.0"
-source = "git+https://github.com/forgesworn/fray?rev=4943413bb86a329c3ad9cc3180c02fd9186ef2ce#4943413bb86a329c3ad9cc3180c02fd9186ef2ce"
+source = "git+https://github.com/forgesworn/fray?rev=1350014f3c95f5c48cb6290f4f9cddc97fa318c6#1350014f3c95f5c48cb6290f4f9cddc97fa318c6"
 dependencies = [
  "serde",
  "serde_json",
@@ -1343,12 +1343,12 @@ dependencies = [
 [[package]]
 name = "fray-net"
 version = "0.1.0"
-source = "git+https://github.com/forgesworn/fray?rev=4943413bb86a329c3ad9cc3180c02fd9186ef2ce#4943413bb86a329c3ad9cc3180c02fd9186ef2ce"
+source = "git+https://github.com/forgesworn/fray?rev=1350014f3c95f5c48cb6290f4f9cddc97fa318c6#1350014f3c95f5c48cb6290f4f9cddc97fa318c6"
 dependencies = [
  "argon2",
  "bytes",
  "fray-keep",
- "fray-relays",
+ "fray-relays 0.1.0 (git+https://github.com/forgesworn/fray?rev=1350014f3c95f5c48cb6290f4f9cddc97fa318c6)",
  "fray-session",
  "futures-util",
  "getrandom 0.3.4",
@@ -1373,7 +1373,7 @@ name = "fray-relay-client"
 version = "0.1.0"
 source = "git+https://github.com/forgesworn/fray-relay-client?rev=7b2243046a01814ad4ad8797ce563425dbcd9011#7b2243046a01814ad4ad8797ce563425dbcd9011"
 dependencies = [
- "fray-relays",
+ "fray-relays 0.1.0 (git+https://github.com/forgesworn/fray?rev=4943413bb86a329c3ad9cc3180c02fd9186ef2ce)",
  "futures-util",
  "log",
  "nostr",
@@ -1381,6 +1381,14 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-tungstenite",
+]
+
+[[package]]
+name = "fray-relays"
+version = "0.1.0"
+source = "git+https://github.com/forgesworn/fray?rev=1350014f3c95f5c48cb6290f4f9cddc97fa318c6#1350014f3c95f5c48cb6290f4f9cddc97fa318c6"
+dependencies = [
+ "log",
 ]
 
 [[package]]
@@ -1394,7 +1402,7 @@ dependencies = [
 [[package]]
 name = "fray-session"
 version = "0.1.0"
-source = "git+https://github.com/forgesworn/fray?rev=4943413bb86a329c3ad9cc3180c02fd9186ef2ce#4943413bb86a329c3ad9cc3180c02fd9186ef2ce"
+source = "git+https://github.com/forgesworn/fray?rev=1350014f3c95f5c48cb6290f4f9cddc97fa318c6#1350014f3c95f5c48cb6290f4f9cddc97fa318c6"
 dependencies = [
  "getrandom 0.3.4",
  "nostr",
@@ -1452,7 +1460,7 @@ dependencies = [
  "flock-render",
  "flock-session",
  "fray-net",
- "fray-relays",
+ "fray-relays 0.1.0 (git+https://github.com/forgesworn/fray?rev=1350014f3c95f5c48cb6290f4f9cddc97fa318c6)",
  "futures-util",
  "glam",
  "jni 0.21.1",

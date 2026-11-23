@@ -17,7 +17,7 @@ log = "0.4"
 rand = { version = "0.8", default-features = false, features = ["std"] }
 rand_pcg = "0.3"
 # QUIC rooms, the LAN beacon and Bluetooth virtual links; the persona check.
-decented-net = { package = "fray-net", git = "https://github.com/forgesworn/fray", rev = "4943413bb86a329c3ad9cc3180c02fd9186ef2ce", optional = true }
+decented-net = { package = "fray-net", git = "https://github.com/forgesworn/fray", rev = "1350014f3c95f5c48cb6290f4f9cddc97fa318c6", optional = true }
 decented-signet = { git = "https://github.com/forgesworn/signet-play", rev = "7594a05450e3224aa8fc464a6fd69f36a642d52f", optional = true }
 nostr = { version = "=0.44.8", default-features = false, features = ["nip44"], optional = true }
 serde_json = { version = "1", optional = true }
