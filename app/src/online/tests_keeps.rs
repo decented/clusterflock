@@ -765,3 +765,100 @@ fn my_keeps_and_the_question_before_connecting_stay_inside_the_safe_area() {
         assert!(!rs[0].intersects(rs[1]) && !rs[1].intersects(rs[2]));
     }
 }
+
+// ─── Invite to this Keep (opens My Signet; the game holds no key) ───────────
+
+/// Run `frames` of the engine with the host stepping and give every button salt that was painted.
+fn painted_salts(rig: &mut KeepRig, e: &mut Engine, n: usize) -> Vec<String> {
+    let mut salts = Vec::new();
+    for _ in 0..n {
+        widgets::BUTTON_RECTS.with(|v| *v.borrow_mut() = Some(Vec::new()));
+        rig.host.update(rig.now());
+        frames(e, 1);
+        salts.extend(widgets::BUTTON_RECTS.with(|v| v.borrow_mut().take()).unwrap().into_iter().map(|(s, ..)| s));
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    salts
+}
+
+const INVITE_SALT: &str = "lobby-invite-keep";
+
+#[test]
+fn on_a_keep_the_lobby_offers_invite_to_this_keep_and_pressing_it_only_opens_my_signet() {
+    let _slot = slot_lock();
+    let mut rig = KeepRig::new("invite-btn", 1, false);
+    let secret = rig.invite(1);
+    let keep_key = rig.keep_key();
+    let mut guest = rig.join_invite(&secret, "Ada");
+    assert!(rig.run_until(&mut [&mut guest], 20, |_, s| in_lobby(s[0])));
+    assert_eq!(guest.keep_key(), Some(keep_key), "the key the link proved");
+    put(guest);
+    let platform = RecordingPlatform::default();
+    let log = platform.opened_log.clone();
+    let dir = test_dir("invite-btn-app");
+    let mut e = engine(Box::new(LobbyScreen::new()), dir.clone(), platform);
+    let salts = painted_salts(&mut rig, &mut e, 90);
+    assert!(salts.iter().any(|s| s == "lobby-ready"), "the guest's own controls are still there");
+    assert!(salts.iter().any(|s| s == INVITE_SALT), "on a Keep the action is offered: {salts:?}");
+    for host_only in ["lobby-start", "lobby-copy", "lobby-link", "lobby-share"] {
+        assert!(!salts.iter().any(|s| s == host_only), "{host_only} stays host-only");
+    }
+    assert!(log.lock().unwrap().is_empty(), "nothing is opened by looking");
+    click(&mut e, INVITE_SALT);
+    let expected = format!("https://mysignet.app/#keep-invite=1&k={}&g=gameflock", hex(&keep_key));
+    assert_eq!(*log.lock().unwrap(), [expected], "exactly that URL, once, asked of the platform");
+    // And nothing else: still in the room, nothing saved, nothing joined or dialled.
+    assert_eq!(e.router.names(), ["lobby"]);
+    assert!(crate::online::is_some());
+    assert!(!dir.join(keeps::FILE).exists());
+    assert!(invited().is_empty());
+}
+
+#[test]
+fn off_a_keep_there_is_no_invite_to_this_keep() {
+    let _slot = slot_lock();
+    // Joined by room code, and as Nearby and Bluetooth guests (the same session, other doors).
+    let mut rig = KeepRig::new("invite-off", 1, true);
+    for by in [JoinedBy::Code, JoinedBy::Nearby, JoinedBy::Bluetooth] {
+        let code = rig.link.with_lan(|q| q.code().expect("code").to_string());
+        let handle = decented_net::join_with_relay(&rig.cfg, &approved(), &code, Box::new(rig.hub.client()));
+        let mut guest = OnlineSession::network_client(QuicClient::new(handle), "Bo", 0, by);
+        assert!(rig.run_until(&mut [&mut guest], 20, |_, s| in_lobby(s[0])), "{by:?}");
+        assert_eq!(guest.keep_key(), None, "{by:?} is not a Keep join");
+        put(guest);
+        let platform = RecordingPlatform::default();
+        let log = platform.opened_log.clone();
+        let mut e = engine(Box::new(LobbyScreen::new()), test_dir("invite-off-app"), platform);
+        let salts = painted_salts(&mut rig, &mut e, 60);
+        assert!(salts.iter().any(|s| s == "lobby-ready"), "{by:?}");
+        assert!(!salts.iter().any(|s| s == INVITE_SALT), "{by:?}: {salts:?}");
+        assert!(log.lock().unwrap().is_empty());
+        leave();
+    }
+    // A room this phone hosts.
+    put(OnlineSession::offline_host("A", 0, HostConfig::new(1)));
+    assert_eq!(crate::online::with(|s| s.keep_key()).flatten(), None);
+    let mut e = engine(Box::new(LobbyScreen::new()), test_dir("invite-host-app"), RecordingPlatform::default());
+    let salts = painted_salts(&mut rig, &mut e, 30);
+    assert!(salts.iter().any(|s| s == "lobby-share"), "the host's own share control is unchanged");
+    assert!(!salts.iter().any(|s| s == INVITE_SALT));
+}
+
+#[test]
+fn the_lobby_with_invite_to_this_keep_stays_inside_the_safe_area_and_apart() {
+    let _slot = slot_lock();
+    for (w, h, top) in PHONES {
+        let (safe, rects) = painted_buttons(Box::new(LobbyScreen::keep_sample()), w, h, top, test_dir("layout-lobby-keep"));
+        let invite = rects.iter().find(|(s, ..)| s == INVITE_SALT).unwrap_or_else(|| panic!("no Invite to this Keep button {w}x{h}"));
+        let ready = rects.iter().find(|(s, ..)| s == "lobby-ready").expect("Ready");
+        for (salt, r, _) in &rects {
+            assert!(safe.contains_rect(*r), "{salt} {w}x{h}: {r:?} outside safe {safe:?}");
+        }
+        assert!(invite.2.contains_rect(invite.1), "{w}x{h}: fully inside its scroll area");
+        assert!(invite.1.height() >= 44.0, "a tap target");
+        assert!(!invite.1.intersects(ready.1), "{w}x{h}: apart from Ready");
+    }
+    // Off a Keep (the same room as a code joiner sees it) the screen has no such button.
+    let (_, rects) = painted_buttons(Box::new(LobbyScreen::guest_sample()), 360.0, 800.0, 48.0, test_dir("layout-lobby-code"));
+    assert!(!rects.iter().any(|(s, ..)| s == INVITE_SALT));
+}

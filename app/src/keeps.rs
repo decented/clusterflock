@@ -141,6 +141,20 @@ pub fn unix_now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
+// ─── Inviting someone to a Keep (in My Signet, never in the game) ───────────
+
+/// The game id My Signet's invite screen is told about (this game has no friends list to send).
+const INVITE_GAME: &str = "gameflock";
+
+/// The link that opens My Signet's invite screen for a Keep, or `None` unless `keep_key` is
+/// exactly 32 bytes. Everything is in the fragment, which a browser never sends to a web server;
+/// there is no query string and no other parameter. Only the Keep's owner can invite anyone, and
+/// does it in My Signet: the game holds no key and gains no authority from this link.
+pub fn invite_to_keep_link(keep_key: &[u8]) -> Option<String> {
+    let key: &[u8; 32] = keep_key.try_into().ok()?;
+    Some(format!("https://mysignet.app/#keep-invite=1&k={}&g={INVITE_GAME}", fray_keep::hex_encode(key)))
+}
+
 // ─── What a link or a paste asks for ────────────────────────────────────────
 
 /// What a launch link or a pasted line asks the app to join. `Debug` never
@@ -240,6 +254,29 @@ mod tests {
     /// Save a Keep the way the game does: read the file, add it, write.
     fn join(d: &Path, n: u8, at: u64) {
         record_join(d, &[n; 32], &[n.wrapping_add(1); 32], Some(&format!("Keep number {n}")), at).unwrap();
+    }
+
+    #[test]
+    fn the_invite_to_keep_link_is_exact_lowercase_and_all_in_the_fragment() {
+        let mut key = [0xab; 32];
+        key[0] = 0x0f;
+        key[31] = 0xcd;
+        let link = invite_to_keep_link(&key).unwrap();
+        assert_eq!(link, "https://mysignet.app/#keep-invite=1&k=0fababababababababababababababababababababababababababababababcd&g=gameflock");
+        assert!(!link.contains('?'), "no query string: a fragment is never sent to a web server");
+        let k = link.split("&k=").nth(1).unwrap().split('&').next().unwrap();
+        assert_eq!(k.len(), 64);
+        assert!(k.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)), "lowercase hex: {k}");
+        assert_eq!(link.matches('&').count(), 2, "no other parameters");
+        assert_eq!(invite_to_keep_link(&[0xAB; 32]).unwrap(), format!("https://mysignet.app/#keep-invite=1&k={}&g=gameflock", "ab".repeat(32)));
+    }
+
+    #[test]
+    fn a_key_that_is_not_32_bytes_gives_no_link() {
+        for n in [0usize, 1, 31, 33, 64] {
+            assert_eq!(invite_to_keep_link(&vec![7u8; n]), None, "{n} bytes");
+        }
+        assert!(invite_to_keep_link(&[7u8; 32]).is_some());
     }
 
     #[test]

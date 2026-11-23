@@ -584,6 +584,17 @@ impl OnlineSession {
     pub fn host_name(&self) -> Option<String> {
         self.me.host_identity().map(|h| plain_name(&h.name))
     }
+    /// The Keep's key, when this session was joined through the Keep client path (an invite link
+    /// or My Keeps): the host key the link proved at connect time (the transport pinned the
+    /// invite's key and verified the host's signed welcome with it), never a key from a message
+    /// the host sent. `None` for a room joined by code, Nearby or Bluetooth, for a room this phone
+    /// hosts, and when the proven key is not exactly 32 bytes.
+    pub fn keep_key(&self) -> Option<[u8; 32]> {
+        if self.by != JoinedBy::Keep {
+            return None;
+        }
+        fray_keep::parse_hex32(&self.me.host_identity()?.pubkey)
+    }
     /// Keep passes the host sent since the last call, each with the host's
     /// proven name when the link proved one. A Keep sends one after admitting a
     /// player (by invite, or by room code or on the local network); the session
