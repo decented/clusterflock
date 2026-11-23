@@ -385,7 +385,7 @@ host-side admission gate and the client's invite join, below).
   admission gate on the QUIC host, asked after the persona check; with no gate the host
   admits as before. A Keep's return pass is an appended `ToClient` variant (index 13) only a
   Keep host sends; it changes no existing message and needs no `PROTO_VERSION` bump. A client keeps a
-  pass only on a join by invite link, and only for the Keep key that link proved; on any other join it drops every pass.
+  pass only when it names the host key the link proved (`fray_keep::accept_pass`'s rule); any other pass is dropped.
 
 ## 11. flock-render
 

@@ -104,7 +104,7 @@ pub fn join_nearby(cfg: &NetConfig, id: &Identity, room: &LanRoom) -> QuicClient
 /// is joined. A failure is worded for a Keep, not a room code: see
 /// [`join_failure_text_for`].
 pub fn join_invite(cfg: &NetConfig, id: &Identity, secret: &[u8; 32], host_key: [u8; 32]) -> QuicClient {
-    QuicClient { invite_key: Some(host_key), ..QuicClient::new(decented_net::join_invite(cfg, id, secret, host_key)) }
+    QuicClient { invite: true, ..QuicClient::new(decented_net::join_invite(cfg, id, secret, host_key)) }
 }
 
 /// [`join_invite`] over a caller-supplied relay (tests, with Fray's
@@ -117,7 +117,7 @@ pub fn join_invite_with_relay(
     relay: Box<dyn decented_net::relay::RendezvousRelay>,
 ) -> QuicClient {
     QuicClient {
-        invite_key: Some(host_key),
+        invite: true,
         ..QuicClient::new(decented_net::join_invite_with_relay(cfg, id, secret, host_key, relay))
     }
 }
@@ -403,10 +403,8 @@ pub struct QuicClient {
     host_key: Option<nostr::PublicKey>,
     /// Bluetooth: the host's attestation is still to be verified.
     deferred: bool,
-    /// Joined by invite: the Keep's key the link named (Fray pins the host to
-    /// it before the hello). A failure is worded for a Keep, not a code, and
-    /// a Keep pass is believed only for this key.
-    invite_key: Option<[u8; 32]>,
+    /// Joined by invite, so a failure is worded for a Keep, not a code.
+    invite: bool,
 }
 
 impl QuicClient {
@@ -418,7 +416,7 @@ impl QuicClient {
             failed: None,
             host_key: None,
             deferred: false,
-            invite_key: None,
+            invite: false,
         }
     }
 
@@ -449,9 +447,6 @@ fn stage_text(stage: JoinStage) -> &'static str {
 }
 
 impl ClientTransport for QuicClient {
-    fn proved_keep_key(&self) -> Option<[u8; 32]> {
-        self.invite_key
-    }
     fn poll(&mut self) -> Option<ClientNetEvent> {
         let h = self.handle.as_ref()?;
         if self.allowed_until.is_some_and(|until| until <= unix_now()) {
@@ -499,7 +494,7 @@ impl ClientTransport for QuicClient {
             }
             ClientEvent::Failed { stage, reason } => {
                 log::info!("[net] join failed at {stage:?}: {reason:?}");
-                let text = join_failure_text_for(&reason, stage, self.invite_key.is_some());
+                let text = join_failure_text_for(&reason, stage, self.invite);
                 self.failed = Some((stage, reason));
                 ClientNetEvent::Failed(text)
             }

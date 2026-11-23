@@ -98,13 +98,6 @@ pub trait ClientTransport: Send {
     fn verify_host(&mut self, _attestation: &str) -> Result<String, String> {
         Err("this link has no host key to check".into())
     }
-    /// The host key this link was asked to reach and proved, when the join
-    /// was by a Keep's invite link; `None` for every other join (room code,
-    /// Nearby, Bluetooth, in-process). A Keep pass is believed only for this
-    /// key.
-    fn proved_keep_key(&self) -> Option<[u8; 32]> {
-        None
-    }
 }
 
 /// A host transport with no remote side (a room nobody can join): the host's

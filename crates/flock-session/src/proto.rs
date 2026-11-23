@@ -128,8 +128,8 @@ pub enum ToClient {
     /// (appended last: variant index 13). A client built before it cannot
     /// decode a variant it does not know and drops the message, so it needs
     /// no `PROTO_VERSION` bump. A Keep host sends it; a phone-hosted match does
-    /// not. A client believes one only for the host its own invite-link join
-    /// proved, so a pass is never proof that a host is a Keep.
+    /// not. A client believes one only from the host it names (the key its
+    /// link proved), so a pass is never proof that a host is a Keep.
     KeepPass(KeepPass),
 }
 
