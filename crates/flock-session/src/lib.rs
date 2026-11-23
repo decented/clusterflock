@@ -1,6 +1,11 @@
 //! Cluster Flock's multiplayer layer (SPEC §10), forked from Stampede's
-//! `race-session` (migration, Keeps, track transfer, the Fray `Authority`
-//! adapter and checkpoints are not ported).
+//! `race-session` (migration, track transfer, the Fray `Authority` adapter
+//! and checkpoints are not ported). What a Keep (a home game server) needs to
+//! host a room is: [`net::QuicHost::set_admission_gate`],
+//! [`net::QuicHost::peers_admitted_by`], [`net::join_invite`],
+//! [`HostAuthority::remove_peer`], [`HostAuthority::send_keep_pass`] and
+//! [`ClientSession::take_keep_passes`], [`invite`] links, and [`probe`], the
+//! headless client behind `flock-headless --join-invite`.
 //!
 //! - [`RunDriver`] / [`FlockView`] / [`ResultsView`]: the one run-screen API.
 //! - [`LocalRun`]: Solo and Flock Practice, no network.
@@ -16,6 +21,8 @@
 //!   Nearby at once, Bluetooth via fray virtual links) with the My Signet
 //!   persona check; [`door::HostLink`] merges the UDP and Bluetooth doors.
 //! - [`proto`]: the wire messages.
+//! - [`invite`] and [`probe`] (feature `native`): a Keep's invite links and the
+//!   headless client that joins by one.
 //!
 //! Every update takes the time explicitly (`now_ms`), so whole matches run on
 //! a virtual clock in tests. See `docs/api/flock-session.md`.

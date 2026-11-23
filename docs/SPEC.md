@@ -377,7 +377,13 @@ Keep invites, track transfer, `authority.rs`, `checkpoint.rs`, race-authority.
   verified persona). Signet persona attestation is required from every joiner on every
   path. This admission code gets an independent review.
 - Keep `flock-headless` (`--smoke` loopback/localhost N-client check, `--lan` bounded LAN
-  host with bots) for device testing from the laptop.
+  host with bots) for device testing from the laptop, and `--join-invite LINK` (a client
+  that joins a Keep's room by its invite link with synthetic identities and plays a round
+  or a number of ticks).
+- A Keep (a home game server) hosts a room as a dedicated host (no player seat) behind an
+  admission gate on the QUIC host, asked after the persona check; with no gate the host
+  admits as before. A Keep's return pass is an appended `ToClient` variant (index 13) only a
+  Keep host sends; it changes no existing message and needs no `PROTO_VERSION` bump.
 
 ## 11. flock-render
 

@@ -334,7 +334,7 @@ fn a_keep_removes_a_player_politely_without_a_ban_and_hands_them_a_pass() {
     let mut b = rig.join_invite(&approved().0, &secret, "Bob");
     assert!(rig.run_until(&mut [&mut a, &mut b], 30, |_, c| in_lobby(c[0]) && in_lobby(c[1])));
     // A pass for this very Keep arrives once, to the one it was sent to.
-    let pass = KeepPass { host_key: rig.keep_key(), secret: secret };
+    let pass = KeepPass { host_key: rig.keep_key(), secret };
     assert!(rig.host.send_keep_pass(rig.peer_of(&a), pass.clone()));
     let mut got = Vec::new();
     rig.run_until(&mut [&mut a, &mut b], 10, |_, c| {
@@ -364,7 +364,7 @@ fn a_keep_removes_a_player_politely_without_a_ban_and_hands_them_a_pass() {
 
 /// The `ToClient` variants a client built before `KeepPass` knew (the first
 /// thirteen, payloads kept the same shape), decoded the way it decodes.
-#[allow(dead_code)]
+#[allow(dead_code, clippy::large_enum_variant)]
 #[derive(serde::Deserialize)]
 enum OldToClient {
     Welcome { proto: u32, seat: u8 },
