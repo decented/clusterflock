@@ -10,6 +10,13 @@
 //!   when every joined phone is ready and rematches when all are ready again.
 //!   Ends after S seconds (default 900). Synthetic signed test identity: the
 //!   phones verify it like any host.
+//! * `--join-invite LINK [--players N] [--ticks T] [--seconds S] [--relays URL,URL]`
+//!   — a client for a Keep: join the room behind a `gameflock://keep/...`
+//!   invite link with N synthetic signed identities (default 1), ready up and
+//!   play until a round completes, or (with `--ticks`) until a client has seen T
+//!   host ticks. One JSON line on stdout. Exit 0 on success, 1 when the Keep
+//!   refuses or ends a link, 3 on timeout (`--seconds`, default 120), 2 on bad
+//!   arguments. `--relays` replaces the default Nostr relays.
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
@@ -22,16 +29,34 @@ use flock_session::{ClientPhase, ClientSession, HostAuthority, HostConfig, HostP
 struct Args {
     smoke: bool,
     lan: bool,
+    /// `--join-invite`: the invite link to join.
+    join_invite: Option<String>,
+    ticks: u32,
+    relays: Option<Vec<String>>,
+    seconds_given: bool,
     players: usize,
     bots: usize,
     seconds: u64,
     name: String,
 }
 
-const USAGE: &str = "flock-headless --smoke [--players N] [--bots B]\n       flock-headless --lan [--bots B] [--seconds S] [--name NAME]";
+const USAGE: &str = "flock-headless --smoke [--players N] [--bots B]\n       flock-headless --lan [--bots B] [--seconds S] [--name NAME]\n       flock-headless --join-invite LINK [--players N] [--ticks T] [--seconds S] [--relays URL,URL]";
 
 fn parse() -> Result<Args, String> {
-    let mut a = Args { smoke: false, lan: false, players: 4, bots: 2, seconds: 900, name: "Flock test host".into() };
+    let mut a = Args {
+        smoke: false,
+        lan: false,
+        join_invite: None,
+        ticks: 0,
+        relays: None,
+        seconds_given: false,
+        players: 4,
+        bots: 2,
+        seconds: 900,
+        name: "Flock test host".into(),
+    };
+    let mut players_given = false;
+    let mut bots_given = false;
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut num = |name: &str| -> Result<u64, String> {
@@ -40,16 +65,51 @@ fn parse() -> Result<Args, String> {
         match arg.as_str() {
             "--smoke" => a.smoke = true,
             "--lan" => a.lan = true,
-            "--players" => a.players = num("--players")? as usize,
-            "--bots" => a.bots = num("--bots")? as usize,
-            "--seconds" => a.seconds = num("--seconds")?,
+            "--players" => {
+                a.players = num("--players")? as usize;
+                players_given = true;
+            }
+            "--bots" => {
+                a.bots = num("--bots")? as usize;
+                bots_given = true;
+            }
+            "--seconds" => {
+                a.seconds = num("--seconds")?;
+                a.seconds_given = true;
+            }
+            "--join-invite" => a.join_invite = Some(it.next().ok_or_else(|| format!("--join-invite needs a link\n{USAGE}"))?),
+            "--ticks" => a.ticks = num("--ticks")?.min(u32::MAX as u64) as u32,
+            "--relays" => {
+                let list = it.next().ok_or_else(|| format!("--relays needs a list\n{USAGE}"))?;
+                a.relays = Some(list.split(',').filter(|r| !r.is_empty()).map(str::to_string).collect());
+            }
             "--name" => a.name = it.next().ok_or("--name needs a value")?,
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
     }
-    if a.smoke == a.lan {
+    if [a.smoke, a.lan, a.join_invite.is_some()].iter().filter(|on| **on).count() != 1 {
         return Err(USAGE.into());
+    }
+    if a.join_invite.is_some() {
+        if bots_given || a.name != "Flock test host" {
+            return Err(format!("--bots and --name are for hosting; a joiner brings none\n{USAGE}"));
+        }
+        if !players_given {
+            a.players = 1;
+        }
+        if !a.seconds_given {
+            a.seconds = 120;
+        }
+        let seats = flock_session::proto::MAX_SEATS;
+        if a.players == 0 || a.players > seats {
+            return Err(format!("--players must be 1..={seats}"));
+        }
+        if a.relays.as_ref().is_some_and(|r| r.is_empty()) {
+            return Err("--relays needs at least one relay".into());
+        }
+    } else if a.ticks != 0 || a.relays.is_some() {
+        return Err(format!("--ticks and --relays are for --join-invite\n{USAGE}"));
     }
     let seats = flock_session::proto::MAX_SEATS;
     if a.smoke && (a.players == 0 || a.players + a.bots > seats || a.players + a.bots < 2) {
@@ -70,6 +130,19 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.join_invite.is_some() {
+        match join(&args) {
+            Ok(()) => return,
+            Err(e @ flock_session::probe::ProbeError::Refused(_)) => {
+                eprintln!("flock-headless: refused: {e}");
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("flock-headless: timed out: {e}");
+                std::process::exit(3);
+            }
+        }
+    }
     let r = if args.smoke { smoke(&args) } else { lan(&args) };
     if let Err(e) = r {
         eprintln!("flock-headless: {e}");
@@ -276,5 +349,23 @@ fn lan(args: &Args) -> Result<(), String> {
     let _ = link;
     host.shutdown();
     println!("{{\"event\":\"lan_done\"}}");
+    Ok(())
+}
+
+/// Join a Keep's room by its invite link and play a round (see the module
+/// notes). The link is parsed here; an unreadable link is a refusal.
+fn join(args: &Args) -> Result<(), flock_session::probe::ProbeError> {
+    use flock_session::probe::{run_clients, ProbeConfig, ProbeError};
+    let link = args.join_invite.as_deref().unwrap_or_default();
+    let (host_key, secret) = flock_session::parse_invite_link(link).map_err(ProbeError::Refused)?;
+    let dir = data_dir("join");
+    let mut cfg = net::net_config(&dir);
+    if let Some(relays) = &args.relays {
+        cfg.relays = relays.clone();
+    }
+    let probe = ProbeConfig { players: args.players, ticks: args.ticks, timeout: Duration::from_secs(args.seconds) };
+    let report = run_clients(&probe, |id, _| net::join_invite(&cfg, id, &secret, host_key), |_| {});
+    let _ = std::fs::remove_dir_all(&dir);
+    println!("{}", report?.json_line());
     Ok(())
 }

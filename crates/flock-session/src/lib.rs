@@ -25,9 +25,13 @@ pub mod client;
 pub mod clock;
 pub mod door;
 pub mod host;
+#[cfg(feature = "native")]
+pub mod invite;
 pub mod local;
 #[cfg(feature = "native")]
 pub mod net;
+#[cfg(feature = "native")]
+pub mod probe;
 pub mod proto;
 mod shadow;
 pub mod transport;
@@ -35,11 +39,15 @@ pub mod view;
 
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, feature = "native"))]
+mod keep_tests;
 
 pub use client::{ClientPhase, ClientSession, ClientStats};
 pub use host::{HostAuthority, HostConfig, HostPhase, HostStats, PendingJoiner};
 pub use local::LocalRun;
-pub use proto::{LobbyPhase, LobbyView, SeatPath, SeatView, PROTO_VERSION};
+#[cfg(feature = "native")]
+pub use invite::{format_invite_link, parse_invite_link, INVITE_LINK_PREFIX};
+pub use proto::{KeepPass, LobbyPhase, LobbyView, SeatPath, SeatView, PROTO_VERSION};
 pub use transport::{
     ClientNetEvent, ClientTransport, HostIdentity, HostNetEvent, HostTransport, LinkPath, LoopClock, LoopbackConfig,
     LoopbackHub, MuxHostTransport, NullHostTransport, PeerKey,
