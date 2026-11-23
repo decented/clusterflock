@@ -292,6 +292,8 @@ fn a_pass_from_the_keep_updates_the_saved_keep_and_other_passes_are_not_believed
 }
 
 #[test]
+// Pins what happens today (a pass from a room-code join is saved without a prompt); whether it
+// should be is an open design question, not a settled rule.
 fn a_room_code_joiner_saves_the_keep_that_names_itself_and_ignores_a_pass_naming_another_key() {
     let _slot = slot_lock();
     // A Keep that lets players in by room code too: it hands the code joiner a pass.
@@ -532,6 +534,162 @@ fn my_keeps_lists_the_saved_keeps_and_a_row_dials_the_secret_in_the_file() {
     click(&mut e, "keep-sure-0");
     frames(&mut e, 3);
     assert!(keeps::load(&dir).is_empty());
+}
+
+// ─── Review fixes: links on My Keeps, a fresh link's secret, a fresher pass, junk room links ──────
+
+/// Put a launch link in front of the running engine, as the platform does.
+fn deliver(e: &mut Engine, launch: &str) {
+    let mut p = RecordingPlatform::default();
+    p.launch.push_back(launch.to_string());
+    e.svc.platform = Box::new(p);
+}
+
+#[test]
+fn a_keep_link_while_my_keeps_is_open_asks_and_never_connects_by_itself() {
+    let _slot = slot_lock();
+    no_network();
+    let dir = test_dir("link-on-keeps");
+    let other = [0x44; 32];
+    keeps::record_join(&dir, &other, &[1; 32], Some("Cousin's Keep"), keeps::unix_now() - 100).unwrap();
+    let mut e = engine(Box::new(MultiplayerScreen::new()), dir.clone(), RecordingPlatform::default());
+    frames(&mut e, 150);
+    click(&mut e, "mp-keeps");
+    frames(&mut e, 120);
+    assert_eq!(e.router.names(), ["multiplayer", "keeps"]);
+    deliver(&mut e, &link(&HOME_LINK_KEY, &HOME_LINK_SECRET));
+    frames(&mut e, 200);
+    assert_eq!(e.router.names(), ["multiplayer", "keeps", "join"], "My Keeps took the link");
+    assert!(invited().is_empty(), "nothing is dialled before the player confirms");
+    assert_eq!(keeps::load(&dir).len(), 1, "and nothing is saved");
+    click(&mut e, "keep-confirm-right");
+    assert_eq!(invited(), [HOME_LINK_KEY], "dialled after the player said yes");
+}
+
+#[test]
+fn a_keep_that_only_shares_a_key_prefix_with_a_saved_keep_still_asks() {
+    let _slot = slot_lock();
+    no_network();
+    let dir = test_dir("link-prefix");
+    keeps::record_join(&dir, &HOME_LINK_KEY, &[9; 32], Some("Cousin's Keep"), 100).unwrap();
+    let mut near = HOME_LINK_KEY;
+    near[31] ^= 1;
+    let mut p = RecordingPlatform::default();
+    p.launch.push_back(link(&near, &HOME_LINK_SECRET));
+    let mut e = engine(Box::new(screens::home::HomeScreen::new()), dir, p);
+    frames(&mut e, 200);
+    assert_eq!(e.router.names(), ["home", "multiplayer", "join"]);
+    assert!(invited().is_empty(), "a different key asks, however alike");
+}
+
+#[test]
+fn declining_a_failed_dial_and_a_bad_link_leave_no_keeps_file() {
+    let _slot = slot_lock();
+    no_network();
+    let (mut e, dir) = engine_with_link("link-nofile", &link(&HOME_LINK_KEY, &HOME_LINK_SECRET));
+    frames(&mut e, 200);
+    click(&mut e, "keep-confirm-left");
+    frames(&mut e, 120);
+    assert!(!dir.join(keeps::FILE).exists(), "Not now saves nothing");
+    deliver(&mut e, &link(&HOME_LINK_KEY, &HOME_LINK_SECRET));
+    frames(&mut e, 200);
+    click(&mut e, "keep-confirm-right");
+    frames(&mut e, 10);
+    assert_eq!(invited(), [HOME_LINK_KEY]);
+    assert!(!dir.join(keeps::FILE).exists(), "a dial that failed saves nothing");
+    deliver(&mut e, "gameflock://keep/abc/def");
+    frames(&mut e, 200);
+    assert!(!dir.join(keeps::FILE).exists(), "a bad link saves nothing");
+}
+
+#[test]
+fn a_fresh_link_after_a_failed_row_join_is_dialled_with_its_own_secret() {
+    let _slot = slot_lock();
+    let dialled: std::rc::Rc<std::cell::RefCell<Vec<[u8; 32]>>> = Default::default();
+    let log = dialled.clone();
+    seam::SEAM.with(|s| s.borrow_mut().join_invite = Some(Box::new(move |_, secret| {
+        log.borrow_mut().push(*secret);
+        Err("test: no network".into())
+    })));
+    let dir = test_dir("fresh-secret");
+    keeps::record_join(&dir, &HOME_LINK_KEY, &[1; 32], Some("Cousin's Keep"), keeps::unix_now() - 100).unwrap();
+    let mut e = engine(Box::new(MultiplayerScreen::new()), dir.clone(), RecordingPlatform::default());
+    frames(&mut e, 150);
+    click(&mut e, "mp-keeps");
+    frames(&mut e, 120);
+    click(&mut e, "keep-join-0");
+    frames(&mut e, 30);
+    assert_eq!(e.router.names(), ["multiplayer", "keeps", "join"]);
+    assert_eq!(*dialled.borrow(), [[1; 32]], "the row dials the secret on file");
+    // The Keep sends a new invite: its secret is the one dialled, not the stored one.
+    deliver(&mut e, &link(&HOME_LINK_KEY, &[2; 32]));
+    frames(&mut e, 200);
+    assert_eq!(*dialled.borrow(), [[1; 32], [2; 32]]);
+    // Try again keeps using the fresh one.
+    click(&mut e, "join-retry");
+    assert_eq!(*dialled.borrow(), [[1; 32], [2; 32], [2; 32]]);
+}
+
+/// Join the Keep through the app's join screen with `stored` already saved; `pass` is what the
+/// Keep's pass saves while the join is under way (none: no pass). Gives the saved entry afterwards.
+fn join_with_stored_keep(tag: &str, stored_at: u64, pass: Option<[u8; 32]>) -> (Vec<keeps::Keep>, [u8; 32], [u8; 32]) {
+    let mut rig = KeepRig::new(tag, 1, false);
+    let secret = rig.invite(1);
+    let keep_key = rig.keep_key();
+    let dir = test_dir(&format!("{tag}-app"));
+    keeps::record_join(&dir, &keep_key, &[7; 32], Some("Old name"), stored_at).unwrap();
+    let guest = std::cell::RefCell::new(Some(rig.join_invite(&secret, "Ada")));
+    let saving = dir.clone();
+    seam::SEAM.with(|s| s.borrow_mut().join_invite = Some(Box::new(move |_, _| {
+        if let Some(p) = pass {
+            // The Keep's pass is saved the moment the join starts, before the seat.
+            keeps::record_join(&saving, &keep_key, &p, Some(KEEP_ROOM), keeps::unix_now()).unwrap();
+        }
+        Ok(guest.borrow_mut().take().expect("dialled once"))
+    })));
+    let mut p = RecordingPlatform::default();
+    p.launch.push_back(link(&keep_key, &secret));
+    let mut e = engine(Box::new(screens::home::HomeScreen::new()), dir.clone(), p);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline && !e.router.names().contains(&"lobby") {
+        rig.host.update(rig.now());
+        frames(&mut e, 1);
+        std::thread::sleep(Duration::from_millis(3));
+    }
+    assert!(e.router.names().contains(&"lobby"), "seated: {:?}", e.router.names());
+    frames(&mut e, 20);
+    (keeps::load(&dir), keep_key, secret)
+}
+
+#[test]
+fn the_seat_time_save_never_replaces_a_fresher_pass_but_does_replace_older_data() {
+    let _slot = slot_lock();
+    // A pass arrived during the join: it is newer than the link's secret and stays.
+    let (list, key, _) = join_with_stored_keep("seat-fresh", keeps::unix_now() - 100, Some([8; 32]));
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].keys(), Some((key, [8; 32])), "the newer pass was not overwritten");
+    drop(_slot);
+    let _slot = slot_lock();
+    // No pass: the link's secret replaces the older stored one.
+    let (list, key, secret) = join_with_stored_keep("seat-old", keeps::unix_now() - 100, None);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].keys(), Some((key, secret)), "older stored data is replaced by the join that worked");
+}
+
+#[test]
+fn a_junk_room_link_leaves_the_typed_code_alone() {
+    let _slot = slot_lock();
+    no_network();
+    let mut e = engine(Box::new(screens::join::JoinScreen::sample()), test_dir("junk-room"), RecordingPlatform::default());
+    frames(&mut e, 30);
+    // `gameflock://join#ABC` is a room link by shape but no room code.
+    deliver(&mut e, "gameflock://join#ABC");
+    frames(&mut e, 30);
+    assert_eq!(e.router.names(), ["join"]);
+    click(&mut e, "join-key-P");
+    click(&mut e, "join-key-M");
+    click(&mut e, "join-go");
+    seam::SEAM.with(|s| assert_eq!(s.borrow().joined, ["KWTQPM"], "KWTQ was still typed, so PM completes it"));
 }
 
 // ─── Layout ─────────────────────────────────────────────────────────────────

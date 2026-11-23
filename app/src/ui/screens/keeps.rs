@@ -11,7 +11,7 @@
 //! in `engine::ONLINE_SCREENS` and Join goes through [`super::account::gate`].
 
 use super::join::JoinScreen;
-use super::{common, Ctx, Screen, Transition};
+use super::{common, online_flow, Ctx, Screen, Transition};
 use crate::keeps::{self, Keep};
 use crate::ui::art;
 use crate::ui::widgets::{self, Btn, S2, S3};
@@ -153,6 +153,13 @@ impl Screen for KeepsScreen {
         common::begin(ctx, &mut self.t);
         if self.list.is_none() && !self.sample {
             self.load(ctx);
+        }
+        // A join link while here: the join screen takes it and asks first about a Keep the player
+        // has not played on, exactly as from the menu. Nothing is dialled by the link itself.
+        if let Some(target) = online_flow::take_join() {
+            log::info!("keeps: join link for {}", keeps::describe(&target));
+            self.confirm = None;
+            return Transition::Push(Box::new(JoinScreen::with_target(target)));
         }
         let acts = std::mem::take(&mut self.acts);
         let mut out = Transition::None;

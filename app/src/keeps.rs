@@ -80,6 +80,54 @@ pub fn record_join(dir: &Path, host_key: &[u8; 32], secret: &[u8; 32], host_name
     keeps.record_join(host_key, secret, host_name, now).map_err(|e| e.to_string())
 }
 
+/// The least time between two saves of passes (a save is a read, a write and a sync on the frame thread).
+pub const PASS_SAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Paces the saving of the passes a Keep sends. A host that sends passes all the time must not
+/// make the phone sync the disk every frame: a pass equal to the one last saved is not saved
+/// again, and saves come at most once per [`PASS_SAVE_INTERVAL`], newest pass first. The session
+/// believes only passes naming the key its link proved (one Keep), so one waiting pass is enough.
+#[derive(Default)]
+pub struct PassSaver {
+    /// The newest pass not saved yet: host key, secret, the host's proven name.
+    pending: Option<([u8; 32], [u8; 32], Option<String>)>,
+    /// The pass last saved (host key, secret).
+    last: Option<([u8; 32], [u8; 32])>,
+    saved_at: Option<std::time::Instant>,
+}
+
+impl PassSaver {
+    /// A pass the session believed.
+    pub fn offer(&mut self, host_key: [u8; 32], secret: [u8; 32], host_name: Option<String>) {
+        if self.last == Some((host_key, secret)) {
+            // Already what is saved: nothing newer waits.
+            self.pending = None;
+        } else {
+            self.pending = Some((host_key, secret, host_name));
+        }
+    }
+
+    /// The pass to save now, if one waits and the interval since the last save has passed.
+    pub fn take_due(&mut self, now: std::time::Instant) -> Option<([u8; 32], [u8; 32], Option<String>)> {
+        if self.pending.is_none() || self.saved_at.is_some_and(|at| now.saturating_duration_since(at) < PASS_SAVE_INTERVAL) {
+            return None;
+        }
+        let pass = self.pending.take()?;
+        self.last = Some((pass.0, pass.1));
+        self.saved_at = Some(now);
+        Some(pass)
+    }
+
+    /// The session is over: the pass still waiting is saved now (it would be lost), and the next
+    /// session's pass counts as new again (the player may have forgotten the Keep since).
+    pub fn end_session(&mut self, now: std::time::Instant) -> Option<([u8; 32], [u8; 32], Option<String>)> {
+        self.last = None;
+        let pass = self.pending.take()?;
+        self.saved_at = Some(now);
+        Some(pass)
+    }
+}
+
 /// Take a Keep out of `keeps.json`.
 pub fn forget_saved(dir: &Path, host_key: &str) -> Result<(), String> {
     // A key that is not hex names no saved Keep: nothing to take out.
@@ -192,6 +240,45 @@ mod tests {
     /// Save a Keep the way the game does: read the file, add it, write.
     fn join(d: &Path, n: u8, at: u64) {
         record_join(d, &[n; 32], &[n.wrapping_add(1); 32], Some(&format!("Keep number {n}")), at).unwrap();
+    }
+
+    #[test]
+    fn a_host_sending_passes_all_the_time_is_saved_at_most_once_per_interval_and_never_the_same_pass_twice() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let mut saver = PassSaver::default();
+        assert!(saver.take_due(t0).is_none(), "nothing waits");
+        // The first pass is saved at once.
+        saver.offer(HOST, [1; 32], Some("Keep".into()));
+        assert_eq!(saver.take_due(t0), Some((HOST, [1; 32], Some("Keep".into()))));
+        // The same pass again: nothing to save, however long since.
+        saver.offer(HOST, [1; 32], None);
+        assert!(saver.take_due(t0 + Duration::from_secs(60)).is_none());
+        // A burst of new ones inside the interval: none yet, and only the newest is kept.
+        for n in 2..10u8 {
+            saver.offer(HOST, [n; 32], None);
+            assert!(saver.take_due(t0 + Duration::from_millis(100 * u64::from(n))).is_none(), "pass {n} waits for the interval");
+        }
+        assert_eq!(saver.take_due(t0 + PASS_SAVE_INTERVAL).map(|p| p.1), Some([9; 32]));
+        assert!(saver.take_due(t0 + PASS_SAVE_INTERVAL * 2).is_none(), "and that is all");
+        // The old pass comes back after a newer one was saved: it is new again, not "the same".
+        saver.offer(HOST, [1; 32], None);
+        assert_eq!(saver.take_due(t0 + PASS_SAVE_INTERVAL * 3).map(|p| p.1), Some([1; 32]));
+    }
+
+    #[test]
+    fn a_pass_waiting_when_the_session_ends_is_saved_and_the_next_session_counts_afresh() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let mut saver = PassSaver::default();
+        saver.offer(HOST, [1; 32], None);
+        assert!(saver.take_due(t0).is_some());
+        saver.offer(HOST, [2; 32], None);
+        assert!(saver.take_due(t0 + Duration::from_secs(1)).is_none());
+        assert_eq!(saver.end_session(t0 + Duration::from_secs(1)).map(|p| p.1), Some([2; 32]), "not lost with the session");
+        // A later session's pass equal to the last of the earlier one is saved again (the Keep may have been forgotten).
+        saver.offer(HOST, [2; 32], None);
+        assert!(saver.take_due(t0 + PASS_SAVE_INTERVAL * 2).is_some());
     }
 
     #[test]

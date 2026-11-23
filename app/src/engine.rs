@@ -20,7 +20,7 @@ use std::path::PathBuf;
 const ONLINE_SCREENS: &[&str] = &["multiplayer", "join", "nearby", "bluetooth", "lobby", "host", "friends", "keeps"];
 
 /// Screens a join link may open the join flow over (the menu family and Home).
-const LINK_OK_ON: &[&str] = &["home", "multiplayer", "join", "nearby", "bluetooth", "settings"];
+const LINK_OK_ON: &[&str] = &["home", "multiplayer", "join", "nearby", "bluetooth", "keeps", "settings"];
 
 /// How long a join link waits for a screen it may open over (seconds).
 const LINK_WAIT: f64 = 30.0;
@@ -108,6 +108,8 @@ pub struct Engine {
     /// screen can take it. Nothing is dialled by a link: the join screen asks first about a Keep
     /// the player has not played on.
     pending_link: Option<(crate::keeps::JoinTarget, f64)>,
+    /// Paces the saving of a Keep's passes.
+    pass_saver: crate::keeps::PassSaver,
 }
 
 impl Engine {
@@ -158,6 +160,7 @@ impl Engine {
             egui_primary: None,
             cursor: Pos2::ZERO,
             pending_link: None,
+            pass_saver: crate::keeps::PassSaver::default(),
         }
     }
 
@@ -330,14 +333,24 @@ impl Engine {
         }
     }
 
-    /// A Keep that let this player in sent a pass: save the Keep to My Keeps (its host key, the
-    /// secret to rejoin with and its proven name). Only a join by invite can yield one, and only
-    /// for the Keep the invite named (see `OnlineSession::take_keep_passes`).
+    /// A Keep sent this player a pass the session believed (one naming the host key the link
+    /// proved, whichever way this player joined: by invite, room code, Nearby or Bluetooth; see
+    /// `OnlineSession::take_keep_passes`): save the Keep to My Keeps (its host key, the secret to
+    /// rejoin with and its proven name). Paced by [`crate::keeps::PassSaver`], so a host that sends
+    /// passes all the time cannot make the phone sync the disk every frame.
     fn save_keep_passes(&mut self) {
         let passes = crate::online::with(|s| s.take_keep_passes()).unwrap_or_default();
         for (pass, host_name) in passes {
-            match crate::keeps::record_join(&self.svc.data_dir, &pass.host_key, &pass.secret, host_name.as_deref(), crate::keeps::unix_now()) {
-                Ok(true) => log::info!("keeps: saved {} from the Keep's pass", crate::keeps::describe(&crate::keeps::JoinTarget::Invite { host_key: pass.host_key, secret: pass.secret })),
+            self.pass_saver.offer(pass.host_key, pass.secret, host_name);
+        }
+        let now = std::time::Instant::now();
+        let mut due = self.pass_saver.take_due(now);
+        if due.is_none() && !crate::online::is_some() {
+            due = self.pass_saver.end_session(now);
+        }
+        if let Some((host_key, secret, host_name)) = due {
+            match crate::keeps::record_join(&self.svc.data_dir, &host_key, &secret, host_name.as_deref(), crate::keeps::unix_now()) {
+                Ok(true) => log::info!("keeps: saved {} from the Keep's pass", crate::keeps::describe(&crate::keeps::JoinTarget::Invite { host_key, secret })),
                 Ok(false) => {}
                 Err(e) => log::warn!("keeps: could not save the Keep's pass: {e}"),
             }
@@ -450,7 +463,7 @@ impl Engine {
         }
         self.pending_link = None;
         self.clear_touches();
-        if top == "join" || top == "multiplayer" || top == "nearby" || top == "bluetooth" {
+        if top == "join" || top == "multiplayer" || top == "nearby" || top == "bluetooth" || top == "keeps" {
             // The screen on top takes the code itself.
             crate::ui::screens::online_flow::stash_join(target);
         } else {

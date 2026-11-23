@@ -89,6 +89,9 @@ pub struct JoinScreen {
     saved: bool,
     /// This join's Keep has been saved to My Keeps (once per join, not once per frame).
     recorded: bool,
+    /// When this join of a Keep began (Unix seconds): a saved entry newer than this holds a pass
+    /// the Keep sent during the join, which the seat-time save must not overwrite.
+    started: u64,
     /// Seconds the "Join a Keep?" card has been asking about its current Keep.
     confirm_age: f32,
     /// The failure on screen is of a Keep that is saved in My Keeps: offer Forget.
@@ -110,7 +113,7 @@ impl Default for JoinScreen {
 
 impl JoinScreen {
     pub fn new() -> JoinScreen {
-        JoinScreen { code: String::new(), stage: Stage::Entry, label: String::new(), door: Door::Online, t: 0.0, shake: 0.0, hint: None, auto: None, invite: None, saved: false, recorded: false, confirm_age: 0.0, can_forget: false, attempt: 0, total: 0.0, retry: true, staged: false }
+        JoinScreen { code: String::new(), stage: Stage::Entry, label: String::new(), door: Door::Online, t: 0.0, shake: 0.0, hint: None, auto: None, invite: None, saved: false, recorded: false, started: 0, confirm_age: 0.0, can_forget: false, attempt: 0, total: 0.0, retry: true, staged: false }
     }
 
     /// Straight into joining (a `gameflock://join#CODE` link). A code that
@@ -222,6 +225,7 @@ impl JoinScreen {
     fn begin_invite(&mut self, ctx: &mut Ctx, invite: Invite) {
         self.attempt = 0;
         self.recorded = false;
+        self.started = keeps::unix_now();
         self.total = 0.0;
         self.retry = true;
         self.door = Door::Online;
@@ -338,8 +342,9 @@ impl Screen for JoinScreen {
                 self.hint = None;
             }
         }
-        // A join link while here: join that room (or Keep) instead.
-        if let Some(target) = online_flow::take_join() {
+        // A join link while here: join that room (or Keep) instead. A room link that is no room
+        // code is ignored, as it was before Keeps (it must not clear the typed code).
+        if let Some(target) = online_flow::take_join().filter(|t| !matches!(t, JoinTarget::Code(c) if room::normalize_code(c).is_none())) {
             let connecting = matches!(self.stage, Stage::Connecting { .. });
             let same = connecting
                 && match (&target, self.invite) {
@@ -349,6 +354,8 @@ impl Screen for JoinScreen {
                 };
             if !same {
                 online::leave();
+                // A fresh link is not a My Keeps row: its own secret is the one to dial.
+                self.saved = false;
                 self.auto = Some(target);
             }
         }
@@ -406,10 +413,17 @@ impl Screen for JoinScreen {
                         // while it fades out, so this step comes round every frame: save once.
                         if let (Some(i), false) = (self.invite, self.recorded) {
                             self.recorded = true;
-                            match keeps::record_join(ctx.data_dir, &i.host_key, &i.secret, host_name.as_deref(), keeps::unix_now()) {
-                                Ok(true) => log::info!("join: saved {} in My Keeps", keeps::describe(&JoinTarget::Invite { host_key: i.host_key, secret: i.secret })),
-                                Ok(false) => {}
-                                Err(e) => log::warn!("join: could not save the Keep: {e}"),
+                            // A pass the Keep sent since this join began is newer than the link's secret.
+                            let host_hex = fray_keep::hex_encode(&i.host_key);
+                            let passed = keeps::load(ctx.data_dir).iter().any(|k| k.host_key == host_hex && k.last_joined >= self.started && k.keys() != Some((i.host_key, i.secret)));
+                            if passed {
+                                log::info!("join: a newer pass for {} is already saved; kept", keeps::describe(&JoinTarget::Invite { host_key: i.host_key, secret: i.secret }));
+                            } else {
+                                match keeps::record_join(ctx.data_dir, &i.host_key, &i.secret, host_name.as_deref(), keeps::unix_now()) {
+                                    Ok(true) => log::info!("join: saved {} in My Keeps", keeps::describe(&JoinTarget::Invite { host_key: i.host_key, secret: i.secret })),
+                                    Ok(false) => {}
+                                    Err(e) => log::warn!("join: could not save the Keep: {e}"),
+                                }
                             }
                         }
                         return Transition::Replace(Box::new(LobbyScreen::new()));
