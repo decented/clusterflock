@@ -328,7 +328,8 @@ finite.
 
 Background: Stampede's multiplayer notes and Twang Thang's Bluetooth notes. **Fork Stampede's `race-session`**; keep its
 class-(a) files near verbatim, rewrite class (c). Do not port: migration (all of it),
-Keep invites, track transfer, `authority.rs`, `checkpoint.rs`, race-authority.
+track transfer, `authority.rs`, `checkpoint.rs`, race-authority. Keep invites are ported (the
+host-side admission gate and the client's invite join, below).
 
 - `APP_TAG = "gameflock"` (= `account::APP_ID`; namespaces room codes, ALPN, LAN beacon,
   attestation `d` tag). `PROTO_VERSION = 3` (0.2: `Hello`/`SeatView` carry `hat`,
@@ -377,7 +378,14 @@ Keep invites, track transfer, `authority.rs`, `checkpoint.rs`, race-authority.
   verified persona). Signet persona attestation is required from every joiner on every
   path. This admission code gets an independent review.
 - Keep `flock-headless` (`--smoke` loopback/localhost N-client check, `--lan` bounded LAN
-  host with bots) for device testing from the laptop.
+  host with bots) for device testing from the laptop, and `--join-invite LINK` (a client
+  that joins a Keep's room by its invite link with synthetic identities and plays a round
+  or a number of ticks).
+- A Keep (a home game server) hosts a room as a dedicated host (no player seat) behind an
+  admission gate on the QUIC host, asked after the persona check; with no gate the host
+  admits as before. A Keep's return pass is an appended `ToClient` variant (index 13) only a
+  Keep host sends; it changes no existing message and needs no `PROTO_VERSION` bump. A client keeps a
+  pass only when it names the host key the link proved (`fray_keep::accept_pass`'s rule); any other pass is dropped.
 
 ## 11. flock-render
 

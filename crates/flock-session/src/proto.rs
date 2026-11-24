@@ -124,6 +124,30 @@ pub enum ToClient {
     /// (fray withholds it from the radio-range welcome), so the client
     /// verifies it now against the host key QUIC proved.
     HostAttestation(String),
+    /// A Keep's way back in, sent once to a player the Keep has admitted
+    /// (appended last: variant index 13). A client built before it cannot
+    /// decode a variant it does not know and drops the message, so it needs
+    /// no `PROTO_VERSION` bump. A Keep host sends it; a phone-hosted match does
+    /// not. A client believes one only from the host it names (the key its
+    /// link proved), so a pass is never proof that a host is a Keep.
+    KeepPass(KeepPass),
+}
+
+/// The pair a `gameflock://keep/<host key>/<secret>` invite link carries: the
+/// Keep's runtime public key and an invite's secret. A Keep sends one to a
+/// player it has admitted so the app can save the Keep. The secret is a way
+/// in: `Debug` does not print it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeepPass {
+    pub host_key: [u8; 32],
+    pub secret: [u8; 32],
+}
+
+impl std::fmt::Debug for KeepPass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let host_key: String = self.host_key.iter().map(|byte| format!("{byte:02x}")).collect();
+        f.debug_struct("KeepPass").field("host_key", &host_key).field("secret", &"<hidden>").finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

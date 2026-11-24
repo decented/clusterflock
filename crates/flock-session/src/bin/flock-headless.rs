@@ -10,6 +10,16 @@
 //!   when every joined phone is ready and rematches when all are ready again.
 //!   Ends after S seconds (default 900). Synthetic signed test identity: the
 //!   phones verify it like any host.
+//! * `--join-invite LINK | --join-invite-env VAR [--players N] [--ticks T] [--seconds S] [--relays URL,URL]`
+//!   — a client for a Keep: join the room behind a `gameflock://keep/...`
+//!   invite link with N synthetic signed identities (default 1), ready up and
+//!   play until a round completes, or (with `--ticks`) until a client has seen T
+//!   host ticks. `--join-invite-env VAR` reads the link from that environment
+//!   variable, so the secret need not appear on a command line. One JSON line
+//!   on stdout. Exit 0 on success, 1 when the Keep refuses or ends a link, 3 on
+//!   timeout (`--seconds`, default 120), 2 on bad arguments, which includes a
+//!   link that does not parse. `--relays` replaces the default Nostr relays and
+//!   turns the public-relay fallback off, so a test cannot reach them.
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
@@ -22,16 +32,46 @@ use flock_session::{ClientPhase, ClientSession, HostAuthority, HostConfig, HostP
 struct Args {
     smoke: bool,
     lan: bool,
+    /// `--join-invite` / `--join-invite-env`: the invite link to join, parsed
+    /// (the Keep's key, the invite's secret).
+    join_invite: Option<([u8; 32], [u8; 32])>,
+    ticks: u32,
+    relays: Option<Vec<String>>,
+    seconds_given: bool,
     players: usize,
     bots: usize,
     seconds: u64,
     name: String,
 }
 
-const USAGE: &str = "flock-headless --smoke [--players N] [--bots B]\n       flock-headless --lan [--bots B] [--seconds S] [--name NAME]";
+const USAGE: &str = "flock-headless --smoke [--players N] [--bots B]\n       flock-headless --lan [--bots B] [--seconds S] [--name NAME]\n       flock-headless --join-invite LINK | --join-invite-env VAR [--players N] [--ticks T] [--seconds S] [--relays URL,URL]";
+
+/// Parse a link given by either flag: bad arguments (exit 2), and one link only.
+/// The error never repeats the link: it carries a secret.
+fn set_invite(a: &mut Args, already: bool, link: &str) -> Result<bool, String> {
+    if already {
+        return Err(format!("give the invite link once (--join-invite or --join-invite-env)\n{USAGE}"));
+    }
+    a.join_invite = Some(flock_session::parse_invite_link(link).map_err(|e| format!("the invite link is not valid: {e}\n{USAGE}"))?);
+    Ok(true)
+}
 
 fn parse() -> Result<Args, String> {
-    let mut a = Args { smoke: false, lan: false, players: 4, bots: 2, seconds: 900, name: "Flock test host".into() };
+    let mut a = Args {
+        smoke: false,
+        lan: false,
+        join_invite: None,
+        ticks: 0,
+        relays: None,
+        seconds_given: false,
+        players: 4,
+        bots: 2,
+        seconds: 900,
+        name: "Flock test host".into(),
+    };
+    let mut players_given = false;
+    let mut bots_given = false;
+    let mut invite_given = false;
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let mut num = |name: &str| -> Result<u64, String> {
@@ -40,16 +80,59 @@ fn parse() -> Result<Args, String> {
         match arg.as_str() {
             "--smoke" => a.smoke = true,
             "--lan" => a.lan = true,
-            "--players" => a.players = num("--players")? as usize,
-            "--bots" => a.bots = num("--bots")? as usize,
-            "--seconds" => a.seconds = num("--seconds")?,
+            "--players" => {
+                a.players = num("--players")? as usize;
+                players_given = true;
+            }
+            "--bots" => {
+                a.bots = num("--bots")? as usize;
+                bots_given = true;
+            }
+            "--seconds" => {
+                a.seconds = num("--seconds")?;
+                a.seconds_given = true;
+            }
+            "--join-invite" => {
+                let link = it.next().ok_or_else(|| format!("--join-invite needs a link\n{USAGE}"))?;
+                invite_given = set_invite(&mut a, invite_given, &link)?;
+            }
+            "--join-invite-env" => {
+                let var = it.next().ok_or_else(|| format!("--join-invite-env needs a variable name\n{USAGE}"))?;
+                let link = std::env::var(&var).map_err(|_| format!("--join-invite-env: {var} is not set\n{USAGE}"))?;
+                invite_given = set_invite(&mut a, invite_given, link.trim())?;
+            }
+            "--ticks" => a.ticks = num("--ticks")?.min(u32::MAX as u64) as u32,
+            "--relays" => {
+                let list = it.next().ok_or_else(|| format!("--relays needs a list\n{USAGE}"))?;
+                a.relays = Some(list.split(',').filter(|r| !r.is_empty()).map(str::to_string).collect());
+            }
             "--name" => a.name = it.next().ok_or("--name needs a value")?,
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
     }
-    if a.smoke == a.lan {
+    if [a.smoke, a.lan, a.join_invite.is_some()].iter().filter(|on| **on).count() != 1 {
         return Err(USAGE.into());
+    }
+    if a.join_invite.is_some() {
+        if bots_given || a.name != "Flock test host" {
+            return Err(format!("--bots and --name are for hosting; a joiner brings none\n{USAGE}"));
+        }
+        if !players_given {
+            a.players = 1;
+        }
+        if !a.seconds_given {
+            a.seconds = 120;
+        }
+        let seats = flock_session::proto::MAX_SEATS;
+        if a.players == 0 || a.players > seats {
+            return Err(format!("--players must be 1..={seats}"));
+        }
+        if a.relays.as_ref().is_some_and(|r| r.is_empty()) {
+            return Err("--relays needs at least one relay".into());
+        }
+    } else if a.ticks != 0 || a.relays.is_some() {
+        return Err(format!("--ticks and --relays are for --join-invite\n{USAGE}"));
     }
     let seats = flock_session::proto::MAX_SEATS;
     if a.smoke && (a.players == 0 || a.players + a.bots > seats || a.players + a.bots < 2) {
@@ -70,6 +153,19 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.join_invite.is_some() {
+        match join(&args) {
+            Ok(()) => return,
+            Err(e @ flock_session::probe::ProbeError::Refused(_)) => {
+                eprintln!("flock-headless: refused: {e}");
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("flock-headless: timed out: {e}");
+                std::process::exit(3);
+            }
+        }
+    }
     let r = if args.smoke { smoke(&args) } else { lan(&args) };
     if let Err(e) = r {
         eprintln!("flock-headless: {e}");
@@ -277,4 +373,64 @@ fn lan(args: &Args) -> Result<(), String> {
     host.shutdown();
     println!("{{\"event\":\"lan_done\"}}");
     Ok(())
+}
+
+/// Join a Keep's room by its invite link and play a round (see the module
+/// notes). The link was parsed with the arguments: an unreadable one never gets here.
+fn join(args: &Args) -> Result<(), flock_session::probe::ProbeError> {
+    use flock_session::probe::{run_clients, ProbeConfig};
+    let (host_key, secret) = args.join_invite.expect("checked in parse");
+    let dir = data_dir("join");
+    let mut cfg = net::net_config(&dir);
+    if let Some(relays) = &args.relays {
+        cfg.relays = relays.clone();
+        // Only the relays given: never the public ones by accident.
+        cfg.relay_fallback = false;
+    }
+    let probe = ProbeConfig { players: args.players, ticks: args.ticks, timeout: Duration::from_secs(args.seconds) };
+    let report = run_clients(&probe, |id, _| net::join_invite(&cfg, id, &secret, host_key), |_| {});
+    let _ = std::fs::remove_dir_all(&dir);
+    println!("{}", report?.json_line());
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn blank() -> Args {
+        Args {
+            smoke: false,
+            lan: false,
+            join_invite: None,
+            ticks: 0,
+            relays: None,
+            seconds_given: false,
+            players: 1,
+            bots: 0,
+            seconds: 120,
+            name: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_good_link_parses_and_a_bad_one_is_a_bad_argument_that_never_echoes_it() {
+        let (key, secret) = ([0x0a; 32], [0xb0; 32]);
+        let link = flock_session::format_invite_link(&key, &secret);
+        let mut a = blank();
+        assert_eq!(set_invite(&mut a, false, &link), Ok(true));
+        assert_eq!(a.join_invite, Some((key, secret)));
+        // Twice is refused.
+        assert!(set_invite(&mut a, true, &link).is_err());
+        // Bad links are an Err from parse (main exits 2 on any Err), whichever flag gave them.
+        let bad = format!("https://{}", &link["gameflock://".len()..]);
+        let e = set_invite(&mut blank(), false, &bad).unwrap_err();
+        assert!(!e.contains(&hex(&secret)), "the error must not repeat the secret: {e}");
+        assert!(set_invite(&mut blank(), false, "").is_err());
+        assert!(set_invite(&mut blank(), false, "gameflock://keep/zz/zz").is_err());
+    }
+
+    fn hex(k: &[u8; 32]) -> String {
+        k.iter().map(|b| format!("{b:02x}")).collect()
+    }
 }

@@ -35,7 +35,7 @@ use flock_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::proto::{
-    chunk, decode, encode, sanitize_name, LobbyPhase, LobbyView, LossyToHost, PlayerNet, RematchMsg, RunnerNet,
+    chunk, decode, encode, sanitize_name, KeepPass, LobbyPhase, LobbyView, LossyToHost, PlayerNet, RematchMsg, RunnerNet,
     SeatPath, SeatView, Snapshot, ToClient, ToHost, COLOURS, INPUTS_PER_PACKET, MAX_LOSSY_LEN, MAX_RELIABLE_LEN,
     MAX_SEATS, PROTO_VERSION, SNAPSHOT_EVERY_TICKS,
 };
@@ -64,6 +64,9 @@ pub const HOST_LEFT: &str = "host left";
 /// A Bluetooth joiner is turned away when the host has no My Signet
 /// attestation to show it.
 pub const HOST_NOT_SIGNED_IN: &str = "host not signed in";
+
+/// The longest reason [`HostAuthority::remove_peer_with_reason`] sends.
+pub const MAX_REMOVED_REASON_CHARS: usize = 120;
 
 const BOT_NAMES: [&str; 6] = ["Pip", "Clover", "Nugget", "Bramble", "Maple", "Dot"];
 
@@ -441,6 +444,44 @@ impl HostAuthority {
         self.send(peer, &ToClient::Closed("kicked".into()));
         self.on_left(peer);
         self.transport.kick(peer);
+        true
+    }
+
+    /// Remove the human seated on `peer` without a ban (a Keep whose invite
+    /// was cancelled: a new invite lets them back). They are told
+    /// `Closed("kicked")` before the link drops. `false`: nobody is seated on
+    /// `peer`, or it is the host's own seat. A peer admitted by the transport
+    /// whose `Hello` has not been seated yet is not removed (`false`): a Keep
+    /// also drops the link itself (`HostTransport::disconnect`) for such a peer.
+    pub fn remove_peer(&mut self, peer: PeerKey) -> bool {
+        self.remove_peer_with_reason(peer, "kicked")
+    }
+
+    /// As [`HostAuthority::remove_peer`], telling them `reason` (control
+    /// characters dropped, at most [`MAX_REMOVED_REASON_CHARS`] characters).
+    pub fn remove_peer_with_reason(&mut self, peer: PeerKey, reason: &str) -> bool {
+        let Some(&id) = self.by_peer.get(&peer) else { return false };
+        if self.humans.iter().any(|h| h.id == id && h.host) {
+            return false;
+        }
+        let reason: String = reason.chars().filter(|c| !c.is_control()).take(MAX_REMOVED_REASON_CHARS).collect();
+        self.send(peer, &ToClient::Closed(reason));
+        self.on_left(peer);
+        // Not a ban. What was just sent flushes before the link closes.
+        self.transport.disconnect(peer);
+        true
+    }
+
+    /// Send `pass` (the Keep's host key and an invite secret) to the human
+    /// seated on `peer`. Only a Keep host calls this, for a player it
+    /// admitted; a client built before [`ToClient::KeepPass`] drops it unread.
+    /// `false`: nobody is seated on `peer`, or it is the host's own seat.
+    pub fn send_keep_pass(&mut self, peer: PeerKey, pass: KeepPass) -> bool {
+        let Some(&id) = self.by_peer.get(&peer) else { return false };
+        if self.humans.iter().any(|h| h.id == id && h.host) {
+            return false;
+        }
+        self.send(peer, &ToClient::KeepPass(pass));
         true
     }
 

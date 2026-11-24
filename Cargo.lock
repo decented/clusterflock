@@ -1265,6 +1265,7 @@ dependencies = [
  "bincode",
  "decented-signet",
  "flock-core",
+ "fray-keep",
  "fray-net",
  "log",
  "nostr",

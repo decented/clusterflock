@@ -31,7 +31,9 @@
 
 use std::path::Path;
 
-pub use decented_net::{Identity, LanBrowser, LanRoom, NetConfig, VirtualLink, VirtualLinkReceiver};
+pub use decented_net::{
+    Admission, Identity, InviteId, LanBrowser, LanRoom, NetConfig, VirtualLink, VirtualLinkReceiver,
+};
 use decented_net::{
     Bytes, ClientEvent, ClientHandle, DisconnectReason, FailReason, HostEvent, HostHandle, JoinStage, PathKind, PeerId,
     RoomInfo,
@@ -96,6 +98,36 @@ pub fn join_nearby(cfg: &NetConfig, id: &Identity, room: &LanRoom) -> QuicClient
     QuicClient::new(decented_net::join_lan(cfg, id, room))
 }
 
+/// Join by invite (online, through the relays): the Keep's runtime public key
+/// and the invite's secret are the two halves of an invite link (see
+/// [`crate::invite::parse_invite_link`]). Only a host whose key is `host_key`
+/// is joined. A failure is worded for a Keep, not a room code: see
+/// [`join_failure_text_for`].
+pub fn join_invite(cfg: &NetConfig, id: &Identity, secret: &[u8; 32], host_key: [u8; 32]) -> QuicClient {
+    QuicClient { invite: true, ..QuicClient::new(decented_net::join_invite(cfg, id, secret, host_key)) }
+}
+
+/// [`join_invite`] over a caller-supplied relay (tests, with Fray's
+/// `FakeRelayHub`).
+pub fn join_invite_with_relay(
+    cfg: &NetConfig,
+    id: &Identity,
+    secret: &[u8; 32],
+    host_key: [u8; 32],
+    relay: Box<dyn decented_net::relay::RendezvousRelay>,
+) -> QuicClient {
+    QuicClient {
+        invite: true,
+        ..QuicClient::new(decented_net::join_invite_with_relay(cfg, id, secret, host_key, relay))
+    }
+}
+
+/// What a Keep that does not answer an invite join, or turns it away, means
+/// to the player. Fray words those for a code join ("Code not found"); an
+/// invite has no code, and a revoked invite gets no answer at all.
+pub const INVITE_NO_ANSWER: &str = "The Keep didn't answer. The invite may have been revoked, or the Keep is offline.";
+pub const INVITE_NOT_ADMITTED: &str = "The Keep didn't let us in. The invite may have been revoked.";
+
 /// Join over a Bluetooth link (the radio's `connect` result).
 pub fn join_bluetooth(cfg: &NetConfig, id: &Identity, link: VirtualLink) -> QuicClient {
     QuicClient::new(decented_net::join_virtual(cfg, id, link))
@@ -108,8 +140,42 @@ pub fn browse_nearby(cfg: &NetConfig) -> LanBrowser {
 
 /// A failed join's text: the reason, then the stage in brackets.
 pub fn join_failure_text(reason: &FailReason, stage: JoinStage) -> String {
-    format!("{reason} [{stage:?}]")
+    join_failure_text_for(reason, stage, false)
 }
+
+/// As [`join_failure_text`]; `invite`: the join was by invite, so the two
+/// reasons a revoked invite produces are worded for a Keep. Every other
+/// reason, and every code join, keeps Fray's words.
+pub fn join_failure_text_for(reason: &FailReason, stage: JoinStage, invite: bool) -> String {
+    match reason {
+        FailReason::NoAnswer if invite => format!("{INVITE_NO_ANSWER} [{stage:?}]"),
+        FailReason::NotAdmitted if invite => format!("{INVITE_NOT_ADMITTED} [{stage:?}]"),
+        _ => format!("{reason} [{stage:?}]"),
+    }
+}
+
+/// A joiner that passed the persona check, as an [`AdmissionGate`] sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct JoinInfo {
+    pub peer: PeerKey,
+    /// Which admission token the joiner proved.
+    pub admitted_by: Admission,
+    /// The joiner's persona public key, from the attestation just verified
+    /// (never the runtime key its link proved).
+    pub persona: [u8; 32],
+    pub path: LinkPath,
+}
+
+/// Decides, once the persona check has passed, whether a joiner is let in
+/// (`Err` carries why, for logs). A refused peer is disconnected (not banned:
+/// it may come back with a valid invite) and never reaches the host as
+/// `Joined`. A host with no gate (the phone app) admits as before.
+///
+/// The gate runs inside [`QuicHost::poll`], under the transport's lock: it
+/// must decide quickly, must not block (disk, network, a lock also taken while
+/// that lock is held) and must not call back into the transport (for example
+/// `HostLink::with_lan`, `peers_admitted_by`), which would deadlock.
+pub type AdmissionGate = Box<dyn FnMut(&JoinInfo) -> Result<(), String> + Send>;
 
 /// A hosted room as a [`HostTransport`]. Room-level events (`Ready`,
 /// `Failed`) are kept for the app to read via [`QuicHost::code`] /
@@ -121,11 +187,46 @@ pub struct QuicHost {
     /// Admitted peers and when their approval expires (unix s).
     approved: std::collections::HashMap<PeerKey, u64>,
     paths: std::collections::HashMap<PeerKey, LinkPath>,
+    /// Which admission token each approved peer proved.
+    admitted: std::collections::HashMap<PeerKey, Admission>,
+    gate: Option<AdmissionGate>,
 }
 
 impl QuicHost {
     pub fn new(handle: HostHandle) -> Self {
-        QuicHost { handle: Some(handle), ready: false, failure: None, approved: Default::default(), paths: Default::default() }
+        QuicHost {
+            handle: Some(handle),
+            ready: false,
+            failure: None,
+            approved: Default::default(),
+            paths: Default::default(),
+            admitted: Default::default(),
+            gate: None,
+        }
+    }
+
+    /// Put a gate in front of admission (see [`AdmissionGate`]). The Keep uses
+    /// it to apply its invite rules; the phone app does not set one. Set it
+    /// before the first `poll`: peers already admitted are not asked again. It
+    /// gates this listener only (a Bluetooth door is a separate `QuicHost`
+    /// with its own gate), and the peer keys it sees are this listener's own.
+    pub fn set_admission_gate(&mut self, gate: AdmissionGate) {
+        self.gate = Some(gate);
+    }
+
+    /// The connected, approved peers that came in by this invite, in peer
+    /// order.
+    pub fn peers_admitted_by(&self, invite: InviteId) -> Vec<PeerKey> {
+        let mut peers: Vec<PeerKey> =
+            self.admitted.iter().filter(|(_, by)| **by == Admission::Invite(invite)).map(|(&peer, _)| peer).collect();
+        peers.sort_unstable();
+        peers
+    }
+
+    /// How an approved peer was admitted (code, LAN token or invite), while
+    /// it is connected.
+    pub fn peer_admission(&self, peer: PeerKey) -> Option<Admission> {
+        self.admitted.get(&peer).copied()
     }
 
     /// How an approved peer reached this host, while it is connected.
@@ -148,6 +249,12 @@ impl QuicHost {
 
     pub fn handle(&self) -> Option<&HostHandle> {
         self.handle.as_ref()
+    }
+
+    /// The listener handle, for calls that need `&mut` (a Keep rotating the
+    /// room's code with [`HostHandle::rotate_code`] while its players stay).
+    pub fn handle_mut(&mut self) -> Option<&mut HostHandle> {
+        self.handle.as_mut()
     }
 
     /// The listener's current LAN admission token (tests dialling a LAN
@@ -174,6 +281,7 @@ impl HostTransport for QuicHost {
         if let Some(peer) = self.approved.iter().find_map(|(&peer, &until)| (until <= now).then_some(peer)) {
             self.approved.remove(&peer);
             self.paths.remove(&peer);
+            self.admitted.remove(&peer);
             // Disconnect, not kick: a kick bans the runtime key for the room's
             // life, and a lapsed approval can be renewed (the runtime key does
             // not change), so the player must be able to come back.
@@ -184,7 +292,7 @@ impl HostTransport for QuicHost {
             match h.poll()? {
                 HostEvent::Ready { .. } => self.ready = true,
                 HostEvent::Failed { reason } => self.failure = Some(reason),
-                HostEvent::PeerJoined { peer, path, pubkey, attestation, .. } => {
+                HostEvent::PeerJoined { peer, path, pubkey, attestation, admitted_by, .. } => {
                     // ADMISSION: the persona attestation must verify for the
                     // runtime key this peer's handshake proved.
                     let info = match verify_persona(attestation.as_deref(), &pubkey, now) {
@@ -201,13 +309,24 @@ impl HostTransport for QuicHost {
                         PathKind::Direct => LinkPath::Direct,
                         PathKind::Virtual => LinkPath::Bluetooth,
                     };
+                    if let Some(gate) = self.gate.as_mut() {
+                        let join = JoinInfo { peer: peer.0, admitted_by, persona: info.persona.to_bytes(), path };
+                        if let Err(why) = gate(&join) {
+                            log::info!("[net] {peer} refused by the gate: {why}");
+                            // Not a ban: the person may come back with the right invite.
+                            h.disconnect(peer);
+                            continue;
+                        }
+                    }
                     self.approved.insert(peer.0, info.valid_until);
+                    self.admitted.insert(peer.0, admitted_by);
                     self.paths.insert(peer.0, path);
                     let persona = Some(decented_net::npub_of(&info.persona));
                     return Some(HostNetEvent::Joined { peer: peer.0, path, persona });
                 }
                 HostEvent::PeerLeft { peer, reason } => {
                     self.paths.remove(&peer.0);
+                    self.admitted.remove(&peer.0);
                     if self.approved.remove(&peer.0).is_none() {
                         continue;
                     }
@@ -284,11 +403,21 @@ pub struct QuicClient {
     host_key: Option<nostr::PublicKey>,
     /// Bluetooth: the host's attestation is still to be verified.
     deferred: bool,
+    /// Joined by invite, so a failure is worded for a Keep, not a code.
+    invite: bool,
 }
 
 impl QuicClient {
     pub fn new(handle: ClientHandle) -> Self {
-        QuicClient { handle: Some(handle), allowed_until: None, path: None, failed: None, host_key: None, deferred: false }
+        QuicClient {
+            handle: Some(handle),
+            allowed_until: None,
+            path: None,
+            failed: None,
+            host_key: None,
+            deferred: false,
+            invite: false,
+        }
     }
 
     /// Where and why the join failed, once its `Failed` event was polled.
@@ -365,7 +494,7 @@ impl ClientTransport for QuicClient {
             }
             ClientEvent::Failed { stage, reason } => {
                 log::info!("[net] join failed at {stage:?}: {reason:?}");
-                let text = join_failure_text(&reason, stage);
+                let text = join_failure_text_for(&reason, stage, self.invite);
                 self.failed = Some((stage, reason));
                 ClientNetEvent::Failed(text)
             }

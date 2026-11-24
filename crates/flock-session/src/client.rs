@@ -24,7 +24,7 @@ use flock_core::{
 
 use crate::clock::ClockSync;
 use crate::proto::{
-    self, decode, encode, LobbyPhase, LobbyView, LossyToClient, LossyToHost, PlayerNet, RematchMsg, Snapshot, ToClient,
+    self, decode, encode, KeepPass, LobbyPhase, LobbyView, LossyToClient, LossyToHost, PlayerNet, RematchMsg, Snapshot, ToClient,
     ToHost, COLOURS, INPUTS_PER_PACKET, PROTO_VERSION,
 };
 use crate::shadow;
@@ -319,7 +319,12 @@ pub struct ClientSession {
     now: u64,
     next_req: u32,
     notices: VecDeque<(String, u64)>,
+    /// Keep passes the host sent, not yet taken by the app.
+    keep_passes: Vec<KeepPass>,
 }
+
+/// Passes held between [`ClientSession::take_keep_passes`] calls.
+const MAX_KEEP_PASSES: usize = 4;
 
 impl ClientSession {
     /// The cosmetic hat sent in the Hello (255 = default for the colour).
@@ -358,6 +363,7 @@ impl ClientSession {
             now: 0,
             next_req: 0,
             notices: VecDeque::new(),
+            keep_passes: Vec::new(),
         }
     }
 
@@ -386,6 +392,15 @@ impl ClientSession {
             return None;
         }
         self.lobby.as_ref()
+    }
+    /// Keep passes the host sent since the last call, in arrival order. A pass
+    /// is kept only when it names the host key this link proved (any way of
+    /// joining: room code, Nearby, invite link, Bluetooth once checked); a pass
+    /// naming another key, or any pass on a link with no proven key, is dropped.
+    /// At most four are held. A pass is not proof that the host is a Keep: it
+    /// says only that this host offers a way back into itself. Taken once.
+    pub fn take_keep_passes(&mut self) -> Vec<KeepPass> {
+        std::mem::take(&mut self.keep_passes)
     }
     pub fn my_seat(&self) -> Option<u8> {
         self.my_seat
@@ -438,6 +453,11 @@ impl ClientSession {
     /// Your own predicted body (tests, debug), before the visual correction.
     pub fn predicted(&self) -> Option<&Runner> {
         self.run.as_ref().filter(|r| r.predicting).map(|r| &r.pred)
+    }
+    /// The newest host world tick a snapshot has reported in the current
+    /// match (checks and headless clients count ticks received with it).
+    pub fn newest_host_tick(&self) -> Option<u32> {
+        self.run.as_ref().map(|r| r.newest_tick)
     }
     /// The latest input number the host has applied.
     pub fn last_ack(&self) -> Option<u32> {
@@ -672,6 +692,21 @@ impl ClientSession {
                     self.phase = ClientPhase::Connecting("Checking the host".into());
                 } else if matches!(self.phase, ClientPhase::Connecting(_) | ClientPhase::Waiting) {
                     self.phase = ClientPhase::Lobby;
+                }
+            }
+            ToClient::KeepPass(pass) => {
+                // The rule of `fray_keep::accept_pass`: believe a pass only when
+                // the key the transport proved for this link (the one the host's
+                // signed welcome was made with) is known and is exactly the key
+                // the pass names. With no proven key nothing matches and the pass
+                // is dropped. Otherwise any room could fill the app's saved Keeps
+                // with Keeps it does not run.
+                let key: String = pass.host_key.iter().map(|byte| format!("{byte:02x}")).collect();
+                let proven = self.host.as_ref().is_some_and(|h| h.pubkey.eq_ignore_ascii_case(&key));
+                if !proven {
+                    log::warn!("[client] a keep pass not for the host this link proved was ignored");
+                } else if self.keep_passes.len() < MAX_KEEP_PASSES && !self.keep_passes.contains(&pass) {
+                    self.keep_passes.push(pass);
                 }
             }
             ToClient::Waiting => {
