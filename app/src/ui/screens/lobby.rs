@@ -66,9 +66,17 @@ pub struct Snap {
     /// Joined, but the host's lobby has not arrived yet.
     pub connecting: bool,
     pub notice: Option<String>,
+    /// On a Keep (joined through the Keep client path) and its key is the 32 bytes the link
+    /// proved: the room card offers "Invite to this Keep".
+    pub keep_key: Option<[u8; 32]>,
 }
 
 impl Snap {
+    /// The My Signet link "Invite to this Keep" opens; `None` off a Keep.
+    fn invite_link(&self) -> Option<String> {
+        self.keep_key.as_ref().and_then(|k| crate::keeps::invite_to_keep_link(k))
+    }
+
     fn me(&self) -> Option<&SeatRow> {
         self.my_seat.and_then(|id| self.seats.iter().find(|s| s.id == id))
     }
@@ -99,6 +107,7 @@ fn snap_of(s: &online::OnlineSession) -> Snap {
         host_persona: s.host_persona().map(str::to_string),
         connecting: lobby.is_none(),
         notice: s.notice(),
+        keep_key: s.keep_key(),
     }
 }
 
@@ -180,6 +189,7 @@ impl LobbyScreen {
             host_persona: None,
             connecting: false,
             notice: None,
+            keep_key: None,
         })
     }
 
@@ -204,6 +214,7 @@ impl LobbyScreen {
             seat.host = false;
         }
         s.host_name = "Cousin's Keep".into();
+        s.keep_key = Some([0xab; 32]);
         s.my_seat = Some(1);
         LobbyScreen::staged(s)
     }
@@ -273,6 +284,11 @@ fn bt_line(door: &BtStatus, radio: BleState, want: bool, err: Option<&str>) -> O
 /// Extra height of the host's room card for the "Share invite" row.
 const SHARE_ROW: f32 = 36.0 + S2;
 
+/// Height of the Keep guest's "Invite to this Keep" button (it carries a second line) and extra
+/// height of the room card for it.
+const KEEP_INVITE_BTN: f32 = 52.0;
+const KEEP_INVITE_ROW: f32 = KEEP_INVITE_BTN - 2.0 + S3;
+
 /// What "Share invite" sends: the room code and the same join link "Copy link" puts on the clipboard.
 pub fn invite_text(code: &str) -> String {
     format!("Join my Cluster Flock room {code}: {}", online::join_link(code))
@@ -285,6 +301,7 @@ enum Act {
     Copy,
     Link,
     Share,
+    InviteToKeep,
     Colour(u8),
     AddBot,
     Remove(u8),
@@ -445,7 +462,8 @@ impl Screen for LobbyScreen {
 
             // ── the scrolling middle ──
             let area = Rect::from_min_max(pos2(body.left(), top), pos2(body.right(), bar.top() - S3));
-            let room_h = if snap.is_host { 122.0 + SHARE_ROW } else { 90.0 };
+            let invite_link = snap.invite_link().filter(|_| !snap.is_host);
+            let room_h = if snap.is_host { 122.0 + SHARE_ROW } else if invite_link.is_some() { 90.0 + KEEP_INVITE_ROW } else { 90.0 };
             let badges_h = if snap.is_host { 26.0 + 8.0 } else { 0.0 };
             let bt_h = if bt.is_some() { 42.0 + 8.0 } else { 0.0 };
             let seat_h = 44.0;
@@ -510,12 +528,19 @@ impl Screen for LobbyScreen {
                         Some(n) => (format!("Host verified: {}", online_common::short_npub(n)), theme::MINT),
                         None => ("Waiting for the host\u{2026}".to_string(), theme::TEXT_DIM),
                     };
-                    p.text(pos2(card.left() + 18.0, card.bottom() - 24.0), Align2::LEFT_CENTER, persona, theme::ui_medium(12.0), col);
+                    p.text(pos2(card.left() + 18.0, card.top() + 90.0 - 24.0), Align2::LEFT_CENTER, persona, theme::ui_medium(12.0), col);
                     if let Some(rtt) = snap.rtt {
                         let q = online::quality(Some(rtt));
                         let qc = [theme::MINT, theme::GOLD, theme::LASER][q as usize];
-                        p.circle_filled(pos2(card.right() - 80.0, card.bottom() - 24.0), 5.0, qc);
-                        p.text(pos2(card.right() - 68.0, card.bottom() - 24.0), Align2::LEFT_CENTER, format!("{rtt} ms"), theme::ui_medium(12.0), theme::TEXT_DIM);
+                        p.circle_filled(pos2(card.right() - 80.0, card.top() + 90.0 - 24.0), 5.0, qc);
+                        p.text(pos2(card.right() - 68.0, card.top() + 90.0 - 24.0), Align2::LEFT_CENTER, format!("{rtt} ms"), theme::ui_medium(12.0), theme::TEXT_DIM);
+                    }
+                    // On a Keep: the owner invites people in My Signet, not here.
+                    if invite_link.is_some() {
+                        let btn = Btn::new("Invite to this Keep").sub("Opens My Signet. Only the Keep's owner can invite.").size(17.0);
+                        if widgets::button(ui, Rect::from_min_size(pos2(card.left() + 18.0, card.top() + 90.0 - 2.0), vec2(card.width() - 36.0, KEEP_INVITE_BTN)), "lobby-invite-keep", &btn).clicked() {
+                            acts.push(Act::InviteToKeep);
+                        }
                     }
                 }
                 y += room_h + S3;
@@ -758,6 +783,16 @@ impl Screen for LobbyScreen {
                         let r = ctx.platform.share_text(&invite_text(c));
                         if let Some(m) = crate::platform::os::share_note(&*ctx.platform, r) {
                             ctx.say(m);
+                        }
+                    }
+                }
+                Act::InviteToKeep => {
+                    // Only opens My Signet's invite screen for this Keep: no network call here,
+                    // no state change, nothing stored.
+                    feedback::tap(ctx);
+                    if let Some(link) = snap.invite_link() {
+                        if let Err(e) = ctx.platform.open_url(&link) {
+                            ctx.say(format!("Couldn't open My Signet: {e}"));
                         }
                     }
                 }

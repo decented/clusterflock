@@ -193,6 +193,8 @@ impl Platform for DesktopPlatform {
 pub struct RecordingPlatform {
     pub orientations: Vec<Orientation>,
     pub opened: Vec<String>,
+    /// The same URLs, in a log a test keeps after the platform moved into an `Engine`.
+    pub opened_log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     pub copied: Vec<String>,
     /// Every text handed to the share sheet.
     pub shared: Vec<String>,
@@ -216,6 +218,7 @@ impl Default for RecordingPlatform {
         RecordingPlatform {
             orientations: Vec::new(),
             opened: Vec::new(),
+            opened_log: Default::default(),
             copied: Vec::new(),
             shared: Vec::new(),
             clipboard: None,
@@ -238,6 +241,7 @@ impl Platform for RecordingPlatform {
 
     fn open_url(&mut self, url: &str) -> Result<(), String> {
         self.opened.push(url.to_string());
+        self.opened_log.lock().unwrap_or_else(|e| e.into_inner()).push(url.to_string());
         Ok(())
     }
 
