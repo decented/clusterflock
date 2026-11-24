@@ -1,18 +1,22 @@
-//! "Play with friends": Host, Join with code, Nearby and Bluetooth. Gated by
+//! "Play with friends": Host, Join with code, Nearby and Bluetooth, and below
+//! them Paste invite (join a Keep from a link on the clipboard) and My Keeps
+//! (the Keeps joined before). Gated by
 //! My Signet's online approval (the engine wraps a push to it in the approval
 //! screen, see `engine::ONLINE_SCREENS`). Expose it as `MultiplayerScreen::new()`.
 
 use super::bluetooth::BluetoothScreen;
 use super::join::JoinScreen;
+use super::keeps::KeepsScreen;
 use super::lobby::LobbyScreen;
 use super::nearby::NearbyScreen;
 use super::online_common;
 use super::online_flow;
 use super::{common, Ctx, Screen, Transition};
+use crate::keeps::{self, JoinTarget};
 use crate::platform::ble::BleState;
 use crate::ui::art::{self, rgba};
 use crate::ui::icons::{self, Icon};
-use crate::ui::widgets::{self, Btn, S3};
+use crate::ui::widgets::{self, Btn, S2, S3};
 use crate::ui::{feedback, theme};
 use egui::{pos2, vec2, Align2, Color32, Rect};
 
@@ -53,8 +57,8 @@ impl Way {
 
 pub struct MultiplayerScreen {
     t: f32,
-    /// Open the join screen for this code on the first frame (a join link).
-    join: Option<String>,
+    /// Open the join screen for this room or Keep on the first frame (a join link).
+    join: Option<JoinTarget>,
     /// Screenshots: show the Bluetooth card whatever the radio says.
     force_bluetooth: bool,
 }
@@ -70,10 +74,10 @@ impl MultiplayerScreen {
         MultiplayerScreen { t: 0.0, join: None, force_bluetooth: false }
     }
 
-    /// The menu with the join screen for `code` straight on top (a join link),
-    /// so Back from it lands here.
-    pub fn joining(code: String) -> MultiplayerScreen {
-        MultiplayerScreen { join: Some(code), ..MultiplayerScreen::new() }
+    /// The menu with the join screen for `target` straight on top (a join
+    /// link), so Back from it lands here.
+    pub fn joining(target: JoinTarget) -> MultiplayerScreen {
+        MultiplayerScreen { join: Some(target), ..MultiplayerScreen::new() }
     }
 
     /// All four ways, whatever this machine's radio says (screenshots).
@@ -107,9 +111,9 @@ impl Screen for MultiplayerScreen {
             crate::online::leave();
         }
         // A join link (cold start, or while on the menu): straight into joining.
-        if let Some(code) = self.join.take().or_else(online_flow::take_join) {
-            log::info!("multiplayer: join link");
-            return Transition::Push(Box::new(JoinScreen::with_code(&code)));
+        if let Some(target) = self.join.take().or_else(online_flow::take_join) {
+            log::info!("multiplayer: join link for {}", keeps::describe(&target));
+            return Transition::Push(Box::new(JoinScreen::with_target(target)));
         }
         Transition::None
     }
@@ -126,6 +130,7 @@ impl Screen for MultiplayerScreen {
         let ways = self.ways();
         let mut chosen: Option<Way> = None;
         let mut account = false;
+        let (mut paste, mut my_keeps) = (false, false);
         let name = ctx.profile.name.clone();
         let signed_in = ctx.account.is_some();
         common::page(ctx.viewport.screen, tm, ui, 0.18, |ui, _| {
@@ -137,8 +142,10 @@ impl Screen for MultiplayerScreen {
             let body = hd.body;
             let gap = S3;
             let foot_h = 44.0;
+            // Paste invite and My Keeps sit in a row of their own above the footer.
+            let keeps_h = 44.0;
             let n = ways.len() as f32;
-            let avail = body.height() - foot_h - gap * 2.0;
+            let avail = body.height() - foot_h - keeps_h - gap * 3.0;
             let card_h = ((avail - gap * (n - 1.0)) / n).clamp(96.0, 124.0);
             let block = n * card_h + (n - 1.0) * gap;
             let y0 = body.top() + ((avail - block) / 2.0).max(0.0);
@@ -151,6 +158,17 @@ impl Screen for MultiplayerScreen {
                     chosen = Some(*way);
                 }
             }
+            // ── Keeps: paste an invite, or rejoin one ──
+            let ky = body.bottom() - foot_h - gap - keeps_h;
+            let kw = (body.width() - S2) / 2.0;
+            widgets::staged(ui, widgets::enter(t, ways.len() + 1), vec2(0.0, 24.0), |ui, off| {
+                if widgets::button(ui, Rect::from_min_size(pos2(body.left(), ky), vec2(kw, keeps_h)).translate(off), "mp-paste-invite", &Btn::new("Paste invite").size(15.0)).clicked() {
+                    paste = true;
+                }
+                if widgets::button(ui, Rect::from_min_size(pos2(body.left() + kw + S2, ky), vec2(kw, keeps_h)).translate(off), "mp-keeps", &Btn::new("My Keeps").size(15.0)).clicked() {
+                    my_keeps = true;
+                }
+            });
             // ── who is playing ──
             let fy = body.bottom() - foot_h;
             let p = ui.painter().clone();
@@ -167,7 +185,37 @@ impl Screen for MultiplayerScreen {
         if let Some(way) = chosen {
             out = open(ctx, way);
         }
+        if my_keeps {
+            feedback::select(ctx);
+            out = Transition::Push(Box::new(KeepsScreen::new()));
+        }
+        if paste {
+            feedback::select(ctx);
+            out = paste_invite(ctx);
+        }
         out
+    }
+}
+
+/// Paste invite: read the clipboard and join the Keep it names. A Keep the
+/// player has not played on is asked about on the join screen before anything
+/// is dialled.
+fn paste_invite(ctx: &mut Ctx) -> Transition {
+    match ctx.platform.read_clipboard().as_deref().and_then(keeps::invite_in_text) {
+        None => {
+            ctx.say(keeps::NO_INVITE_ON_CLIPBOARD);
+            Transition::None
+        }
+        Some(JoinTarget::BadInvite) => {
+            ctx.say(keeps::NOT_AN_INVITE);
+            Transition::None
+        }
+        Some(target) => {
+            if let Some(gate) = super::account::gate(ctx) {
+                return gate;
+            }
+            Transition::Push(Box::new(JoinScreen::with_target(target)))
+        }
     }
 }
 

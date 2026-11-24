@@ -17,10 +17,10 @@ use std::path::PathBuf;
 /// Screens that need online approval from My Signet (see `Account::online_allowed`).
 /// The router wraps a push/cut/replace to one of these in the approval screen
 /// when approval is missing: the multiplayer menu and everything behind it.
-const ONLINE_SCREENS: &[&str] = &["multiplayer", "join", "nearby", "bluetooth", "lobby", "host", "friends"];
+const ONLINE_SCREENS: &[&str] = &["multiplayer", "join", "nearby", "bluetooth", "lobby", "host", "friends", "keeps"];
 
 /// Screens a join link may open the join flow over (the menu family and Home).
-const LINK_OK_ON: &[&str] = &["home", "multiplayer", "join", "nearby", "bluetooth", "settings"];
+const LINK_OK_ON: &[&str] = &["home", "multiplayer", "join", "nearby", "bluetooth", "keeps", "settings"];
 
 /// How long a join link waits for a screen it may open over (seconds).
 const LINK_WAIT: f64 = 30.0;
@@ -104,8 +104,12 @@ pub struct Engine {
     /// The touch (or mouse button) that drives egui's single pointer.
     egui_primary: Option<u64>,
     cursor: Pos2,
-    /// A join code from a launch link, and when it arrived (engine time), until a screen can take it.
-    pending_link: Option<(String, f64)>,
+    /// A room code or a Keep invite from a launch link, and when it arrived (engine time), until a
+    /// screen can take it. Nothing is dialled by a link: the join screen asks first about a Keep
+    /// the player has not played on.
+    pending_link: Option<(crate::keeps::JoinTarget, f64)>,
+    /// Paces the saving of a Keep's passes.
+    pass_saver: crate::keeps::PassSaver,
 }
 
 impl Engine {
@@ -156,6 +160,7 @@ impl Engine {
             egui_primary: None,
             cursor: Pos2::ZERO,
             pending_link: None,
+            pass_saver: crate::keeps::PassSaver::default(),
         }
     }
 
@@ -314,6 +319,7 @@ impl Engine {
         self.account_upkeep();
         // Keep a hosted room (and our seat) alive while the UI is paused.
         crate::online::pump_auto();
+        self.save_keep_passes();
         crate::online::end_frame();
         self.sync_room_service();
     }
@@ -324,6 +330,30 @@ impl Engine {
         if want != self.room_service {
             self.room_service = want;
             self.svc.platform.set_room_service(want);
+        }
+    }
+
+    /// A Keep sent this player a pass the session believed (one naming the host key the link
+    /// proved, whichever way this player joined: by invite, room code, Nearby or Bluetooth; see
+    /// `OnlineSession::take_keep_passes`): save the Keep to My Keeps (its host key, the secret to
+    /// rejoin with and its proven name). Paced by [`crate::keeps::PassSaver`], so a host that sends
+    /// passes all the time cannot make the phone sync the disk every frame.
+    fn save_keep_passes(&mut self) {
+        let passes = crate::online::with(|s| s.take_keep_passes()).unwrap_or_default();
+        for (pass, host_name) in passes {
+            self.pass_saver.offer(pass.host_key, pass.secret, host_name);
+        }
+        let now = std::time::Instant::now();
+        let mut due = self.pass_saver.take_due(now);
+        if due.is_none() && !crate::online::is_some() {
+            due = self.pass_saver.end_session(now);
+        }
+        if let Some((host_key, secret, host_name)) = due {
+            match crate::keeps::record_join(&self.svc.data_dir, &host_key, &secret, host_name.as_deref(), crate::keeps::unix_now()) {
+                Ok(true) => log::info!("keeps: saved {} from the Keep's pass", crate::keeps::describe(&crate::keeps::JoinTarget::Invite { host_key, secret })),
+                Ok(false) => {}
+                Err(e) => log::warn!("keeps: could not save the Keep's pass: {e}"),
+            }
         }
     }
 
@@ -404,12 +434,12 @@ impl Engine {
         }
     }
 
-    /// Hand a waiting join code to the multiplayer flow: from Home or the menu
+    /// Hand a waiting join code or Keep invite to the multiplayer flow: from Home or the menu
     /// family it opens the join screen over the menu (the gate asks for My
     /// Signet first when needed). Over anything else (a match, the sign-in
     /// page) it waits a little; in a room it is dropped with a hint.
     fn route_join_link(&mut self, now: f64) {
-        let Some((code, at)) = self.pending_link.clone() else { return };
+        let Some((target, at)) = self.pending_link.clone() else { return };
         if now - at > LINK_WAIT {
             self.pending_link = None;
             return;
@@ -433,11 +463,11 @@ impl Engine {
         }
         self.pending_link = None;
         self.clear_touches();
-        if top == "join" || top == "multiplayer" || top == "nearby" || top == "bluetooth" {
+        if top == "join" || top == "multiplayer" || top == "nearby" || top == "bluetooth" || top == "keeps" {
             // The screen on top takes the code itself.
-            crate::ui::screens::online_flow::stash_join(code);
+            crate::ui::screens::online_flow::stash_join(target);
         } else {
-            self.apply(crate::ui::screens::Transition::Push(Box::new(crate::ui::screens::multiplayer::MultiplayerScreen::joining(code))));
+            self.apply(crate::ui::screens::Transition::Push(Box::new(crate::ui::screens::multiplayer::MultiplayerScreen::joining(target))));
         }
     }
 
@@ -463,12 +493,13 @@ impl Engine {
         self.svc.updates.tick(dt, self.svc.platform.as_mut());
         self.account_upkeep();
 
-        // Launch links (cold start or while running): `gameflock://join#CODE`.
+        // Launch links (cold start or while running): `gameflock://join#CODE` or
+        // `gameflock://keep/<host key>/<secret>`. The log never carries a link's text.
         while let Some(link) = self.svc.platform.take_launch_link() {
-            match crate::platform::parse_join_link(&link) {
-                Some(code) => {
-                    log::info!("launch link: join a room ({} chars)", code.len());
-                    self.pending_link = Some((code, time));
+            match crate::keeps::parse_launch_link(&link) {
+                Some(target) => {
+                    log::info!("launch link: join {}", crate::keeps::describe(&target));
+                    self.pending_link = Some((target, time));
                 }
                 None => log::info!("launch link ignored ({} chars)", link.len()),
             }
@@ -549,6 +580,7 @@ impl Engine {
 
         // The online room runs whichever screen is up: drive it if no screen did.
         crate::online::pump_auto();
+        self.save_keep_passes();
         crate::online::end_frame();
 
         self.sync_wake_lock();

@@ -1460,6 +1460,7 @@ dependencies = [
  "flock-core",
  "flock-render",
  "flock-session",
+ "fray-keep",
  "fray-net",
  "fray-relays 0.1.0 (git+https://github.com/forgesworn/fray?rev=1350014f3c95f5c48cb6290f4f9cddc97fa318c6)",
  "futures-util",

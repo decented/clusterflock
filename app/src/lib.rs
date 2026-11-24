@@ -18,6 +18,7 @@ pub mod daily;
 pub mod engine;
 pub mod games;
 pub mod haptics;
+pub mod keeps;
 pub mod nostr_fetch;
 pub mod online;
 pub mod platform;

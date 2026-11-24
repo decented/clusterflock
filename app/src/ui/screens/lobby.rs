@@ -91,7 +91,11 @@ fn snap_of(s: &online::OnlineSession) -> Snap {
         bt: s.bluetooth(),
         rtt: s.rtt_ms(),
         can_start: s.can_start(),
-        host_name: lobby.and_then(|l| l.host_seat().map(|h| h.name.clone())).unwrap_or_else(|| "The host".into()),
+        // A Keep's room has no host seat: the name its link proved stands in.
+        host_name: match s.joined_by() {
+            JoinedBy::Keep => s.host_name().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "The Keep".into()),
+            _ => lobby.and_then(|l| l.host_seat().map(|h| h.name.clone())).unwrap_or_else(|| "The host".into()),
+        },
         host_persona: s.host_persona().map(str::to_string),
         connecting: lobby.is_none(),
         notice: s.notice(),
@@ -189,6 +193,18 @@ impl LobbyScreen {
         s.code = None;
         s.rtt = Some(64);
         s.host_persona = Some("npub1zf2kq9ynl4c7xd0h8rgw3s6vta5e2mj9u4pcxk8wh7qa3d5ntl0gsr6yv2e".into());
+        LobbyScreen::staged(s)
+    }
+
+    /// A guest in a Keep's room: no seat is the host's (screenshots).
+    pub fn keep_sample() -> LobbyScreen {
+        let mut s = LobbyScreen::guest_sample().sample.take().expect("staged");
+        s.joined_by = JoinedBy::Keep;
+        for seat in s.seats.iter_mut() {
+            seat.host = false;
+        }
+        s.host_name = "Cousin's Keep".into();
+        s.my_seat = Some(1);
         LobbyScreen::staged(s)
     }
 
@@ -352,7 +368,13 @@ impl Screen for LobbyScreen {
         let my_colour = snap.me().map(|m| m.colour);
         let my_hat = snap.me().map_or(ctx.profile.hat, |m| m.hat);
         let skill = self.bot_skill;
-        let title = if snap.is_host { "Your room".to_string() } else { format!("{}'s room", snap.host_name) };
+        let title = if snap.is_host {
+            "Your room".to_string()
+        } else if snap.joined_by == JoinedBy::Keep {
+            snap.host_name.clone()
+        } else {
+            format!("{}'s room", snap.host_name)
+        };
         let title = if snap.connecting && !snap.is_host { "Lobby".to_string() } else { title };
         common::page(ctx.viewport.screen, tm, ui, 1.3, |ui, _| {
             let hd = widgets::header(ui, safe, &title, widgets::enter(t, 0));

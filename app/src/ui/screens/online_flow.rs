@@ -4,7 +4,8 @@
 //!   `open_nearby`, `open_bluetooth`, `radio`): production code calls the real
 //!   `OnlineSession` constructors (which need My Signet's approval); tests
 //!   install closures that build loopback / fake-radio sessions instead.
-//! * The join-link stash the engine fills from `gameflock://join#CODE`.
+//! * The join-link stash the engine fills from `gameflock://join#CODE` and
+//!   `gameflock://keep/...`.
 //! * The hand-off to the match: `start_run` builds the run screen
 //!   (`RunScreen::online`) on a [`SlotDriver`] and `show_results` the results
 //!   table with Rematch / Leave. `// HOOK:` marks the two small places that
@@ -13,6 +14,7 @@
 use super::results::{ResultsLabels, ResultsScreen};
 use super::run::RunScreen;
 use super::{Ctx, Screen, Transition};
+use crate::keeps::JoinTarget;
 use crate::online::{self, OnlineSession};
 use crate::platform::ble::{self, Ble, BleSeen};
 use flock_core::{InputFrame, PlayerId, Tool};
@@ -25,15 +27,16 @@ pub const MENU: &str = "multiplayer";
 
 // ─── join-link stash ────────────────────────────────────────────────────────
 
-static PENDING_JOIN: Mutex<Option<String>> = Mutex::new(None);
+static PENDING_JOIN: Mutex<Option<JoinTarget>> = Mutex::new(None);
 
-/// A `gameflock://join#CODE` link arrived: remember its code for the join screen.
-pub fn stash_join(code: String) {
-    *PENDING_JOIN.lock().unwrap_or_else(|e| e.into_inner()) = Some(code);
+/// A `gameflock://join#CODE` or `gameflock://keep/...` link arrived: remember
+/// what it asks for for the join screen. Nothing is dialled by this.
+pub fn stash_join(target: JoinTarget) {
+    *PENDING_JOIN.lock().unwrap_or_else(|e| e.into_inner()) = Some(target);
 }
 
-/// The stashed join code, once.
-pub fn take_join() -> Option<String> {
+/// The stashed join target, once.
+pub fn take_join() -> Option<JoinTarget> {
     PENDING_JOIN.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
@@ -54,11 +57,14 @@ pub mod seam {
     pub struct Seam {
         pub host: Option<Box<dyn FnMut() -> Result<OnlineSession, String>>>,
         pub join_code: Option<Box<dyn FnMut(&str) -> Result<OnlineSession, String>>>,
+        pub join_invite: Option<Box<dyn FnMut(&[u8; 32], &[u8; 32]) -> Result<OnlineSession, String>>>,
         pub bluetooth_join: Option<Box<dyn FnMut(&BleSeen) -> Result<OnlineSession, String>>>,
         pub start_bluetooth: Option<Box<dyn FnMut(&mut OnlineSession, u8) -> Result<(), String>>>,
         pub radio: Option<Arc<dyn Ble>>,
         /// Codes joined (in order), for assertions.
         pub joined: Vec<String>,
+        /// Keeps dialled by invite (host keys, in order), for assertions.
+        pub invited: Vec<[u8; 32]>,
     }
 
     thread_local! {
@@ -102,6 +108,20 @@ pub fn open_join_code(ctx: &mut Ctx, code: &str) -> Result<(), String> {
         }
     }
     OnlineSession::join_code(ctx.data_dir, code, &ctx.profile.name, ctx.profile.preferred_colour()).map(online::put)
+}
+
+/// Join a Keep by invite (online, through the relays).
+pub fn open_join_invite(ctx: &mut Ctx, host_key: [u8; 32], secret: [u8; 32]) -> Result<(), String> {
+    #[cfg(test)]
+    {
+        seam::SEAM.with(|s| s.borrow_mut().invited.push(host_key));
+        if let Some(mut f) = seam::SEAM.with(|s| s.borrow_mut().join_invite.take()) {
+            let res = f(&host_key, &secret);
+            seam::SEAM.with(|s| s.borrow_mut().join_invite = Some(f));
+            return res.map(online::put);
+        }
+    }
+    OnlineSession::join_invite(ctx.data_dir, host_key, secret, &ctx.profile.name, ctx.profile.preferred_colour()).map(online::put)
 }
 
 /// Join a room heard on the LAN.
